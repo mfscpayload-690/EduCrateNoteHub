@@ -15,7 +15,11 @@
         .shimmer { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: shim 1.5s infinite; }
         @keyframes shim { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
         .dark .shimmer { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); }
-        body.modal-open { overflow: hidden; }
+        body.modal-open { overflow: hidden; position: fixed; width: 100%; }
+        /* Prevent overscroll bounce on iOS */
+        html, body { overscroll-behavior: none; }
+        /* Smooth scrolling for touch devices */
+        * { -webkit-tap-highlight-color: transparent; }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans selection:bg-primary-100 dark:selection:bg-primary-900">
@@ -29,11 +33,8 @@
             <button id="menuBtn" class="md:hidden p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl">
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
-            <a href="/" class="flex items-center gap-2.5">
-                <div class="w-9 h-9 bg-primary-600 rounded-xl flex items-center justify-center shadow-lg shadow-primary-500/30">
-                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" /></svg>
-                </div>
-                <span class="text-lg font-bold text-slate-800 dark:text-white tracking-tight">EduCrate</span>
+            <a href="/" class="flex items-center">
+                <span class="text-xl font-extrabold text-primary-600 dark:text-primary-400 tracking-tight">EduCrate</span>
             </a>
         </div>
 
@@ -45,11 +46,6 @@
             </button>
 
             <div class="relative w-full max-w-md">
-                <!-- Mobile Search Trigger Icon -->
-                <button id="mobileSearchTrigger" class="md:hidden p-2.5 text-slate-500 bg-slate-100 dark:bg-slate-800 rounded-xl ml-auto">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                </button>
-
                 <!-- Actual Search Input -->
                 <div id="searchBarContainer" class="hidden md:block relative w-full">
                     <input type="text" id="searchInput" placeholder="Search notes..." class="w-full pl-4 pr-10 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-xl text-sm focus:ring-2 focus:ring-primary-500 dark:text-white outline-none transition-all">
@@ -59,7 +55,11 @@
         </div>
 
         <!-- Right Section: Theme Toggle -->
-        <div id="rightNav" class="flex items-center transition-all duration-300">
+        <div id="rightNav" class="flex items-center gap-1 transition-all duration-300">
+            <!-- Mobile Search Trigger Icon -->
+            <button id="mobileSearchTrigger" class="md:hidden p-2.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            </button>
             <button id="themeToggle" class="p-2.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">
                 <svg id="sunIcon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
                 <svg id="moonIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
@@ -91,11 +91,15 @@
         
         <div class="p-6 md:p-8">
             <div id="welcomeState" class="flex flex-col items-center justify-center py-24 text-center">
-                <div class="w-20 h-20 bg-primary-50 dark:bg-primary-900/20 text-primary-600 rounded-[2rem] flex items-center justify-center mb-8">
-                    <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" /></svg>
+                <div class="w-20 h-20 rounded-[2rem] flex items-center justify-center mb-8 overflow-hidden">
+                    <img src="/logo.png" alt="EduCrate" width="80" height="80" class="w-full h-full object-cover" loading="lazy" decoding="async">
                 </div>
                 <h2 class="text-3xl font-extrabold dark:text-white mb-3">Welcome to EduCrate</h2>
-                <p class="text-slate-500 max-w-sm mx-auto leading-relaxed">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
+                <p class="text-slate-500 max-w-sm mx-auto leading-relaxed mb-6">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
+                <button id="browseSubjectsBtn" class="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 hover:scale-105 transition-all shadow-lg shadow-primary-500/30 active:scale-95">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                    Browse Subjects
+                </button>
             </div>
             
             <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
@@ -126,12 +130,24 @@
                 </div>
             </div>
 
-            <div class="flex-1 bg-slate-100 dark:bg-black relative">
+            <div class="flex-1 bg-slate-100 dark:bg-black relative overflow-hidden" style="touch-action: pan-x pan-y;">
+                <!-- Mobile: Show buttons instead of heavy iframe -->
+                <div id="mobileViewOptions" class="md:hidden absolute inset-0 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 z-30 p-6 text-center">
+                    <div class="bg-red-50 dark:bg-red-900/20 p-6 rounded-3xl mb-6">
+                        <svg class="w-16 h-16 text-red-500" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>
+                    </div>
+                    <p class="text-slate-500 dark:text-slate-400 text-sm mb-6 max-w-xs">For the best viewing experience on mobile, open the PDF in your browser's native viewer.</p>
+                    <a id="mobileViewBtn" href="#" target="_blank" rel="noopener" class="flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 transition-all mb-3 w-full max-w-xs justify-center">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                        View in Browser
+                    </a>
+                </div>
+                <!-- Desktop: Use iframe -->
                 <div id="pdfLoading" class="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 z-10">
                     <div class="w-12 h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
                     <p class="text-slate-400 text-xs font-bold tracking-widest uppercase">Fetching Document...</p>
                 </div>
-                <iframe id="pdfViewer" class="w-full h-full border-0 relative z-20" src="about:blank"></iframe>
+                <iframe id="pdfViewer" class="w-full h-full border-0 relative z-20 hidden md:block" src="about:blank" style="touch-action: manipulation;"></iframe>
             </div>
         </div>
     </div>
