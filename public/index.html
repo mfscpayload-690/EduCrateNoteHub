@@ -3,9 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
-    <title>EduCrate | S4 CS2 Resources</title>
+    <title>EduCrate |S4 CS2 Notes</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs" type="module"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -21,15 +20,8 @@
         html, body { overscroll-behavior: none; }
         /* Smooth scrolling for touch devices */
         * { -webkit-tap-highlight-color: transparent; }
-        /* PDF Viewer Styles */
-        #pdfPagesContainer { scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
-        #pdfPagesContainer::-webkit-scrollbar { width: 8px; }
-        #pdfPagesContainer::-webkit-scrollbar-track { background: transparent; }
-        #pdfPagesContainer::-webkit-scrollbar-thumb { background: rgba(100,100,100,0.3); border-radius: 4px; }
-        #pdfPagesContainer::-webkit-scrollbar-thumb:hover { background: rgba(100,100,100,0.5); }
-        .pdf-page-wrapper { display: flex; justify-content: center; margin-bottom: 8px; }
-        .pdf-page-canvas { max-width: 100%; height: auto !important; box-shadow: 0 2px 8px rgba(0,0,0,0.15); background: white; }
-        .dark .pdf-page-canvas { box-shadow: 0 2px 12px rgba(0,0,0,0.4); }
+        /* PDF Viewer Styles - Mobile Optimized */
+        #pdfIframe { border: none; width: 100%; height: 100%; background: white; }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans selection:bg-primary-100 dark:selection:bg-primary-900">
@@ -96,7 +88,12 @@
     <!-- Main Content -->
     <main class="md:ml-64 pt-16 min-h-screen">
         <div id="contentHeader" class="hidden p-6 md:p-8 bg-white dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800">
-            <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
+            <div class="flex items-center justify-between">
+                <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
+                <button id="refreshBtn" class="p-2 text-slate-500 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all" title="Refresh files">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                </button>
+            </div>
         </div>
         
         <div class="p-6 md:p-8">
@@ -117,7 +114,7 @@
         </div>
     </main>
     
-    <!-- PDF VIEWER MODAL -->
+    <!-- PDF VIEWER MODAL - Mobile Optimized with Google Drive Preview -->
     <div id="pdfModal" class="fixed inset-0 z-[100] hidden flex flex-col">
         <div class="absolute inset-0 bg-slate-950/95 backdrop-blur-sm" id="modalBackdrop"></div>
         <div class="relative flex flex-col h-full w-full overflow-hidden">
@@ -128,12 +125,6 @@
                         <svg class="w-3 h-3 sm:w-4 sm:h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>
                     </div>
                     <h3 id="pdfTitle" class="font-bold dark:text-white truncate text-xs sm:text-sm">Document.pdf</h3>
-                </div>
-                <!-- Page Indicator -->
-                <div class="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1 bg-slate-100 dark:bg-slate-800 rounded-lg mx-2">
-                    <span id="currentPage" class="text-xs sm:text-sm font-bold text-primary-600 dark:text-primary-400">1</span>
-                    <span class="text-xs text-slate-400">/</span>
-                    <span id="totalPages" class="text-xs sm:text-sm font-medium text-slate-500">1</span>
                 </div>
                 <div class="flex items-center gap-1 sm:gap-2">
                     <a id="pdfDownload" href="#" download class="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-primary-600 text-white rounded-lg sm:rounded-xl text-xs font-bold hover:bg-primary-700 transition-all">
@@ -146,31 +137,15 @@
                 </div>
             </div>
 
-            <!-- PDF Pages Container -->
-            <div id="pdfPagesContainer" class="flex-1 overflow-y-auto overflow-x-hidden bg-slate-200 dark:bg-slate-950 p-2 sm:p-4">
+            <!-- PDF Iframe Container -->
+            <div id="pdfContainer" class="flex-1 overflow-hidden bg-slate-200 dark:bg-slate-950">
                 <!-- Loading State -->
                 <div id="pdfLoading" class="flex flex-col items-center justify-center h-full">
                     <div class="w-10 h-10 sm:w-12 sm:h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                    <p class="text-slate-400 text-xs font-bold tracking-widest uppercase mb-2">Loading PDF...</p>
-                    <p id="pdfLoadProgress" class="text-slate-500 text-xs">0%</p>
+                    <p class="text-slate-400 text-xs font-bold tracking-widest uppercase">Loading PDF...</p>
                 </div>
-                <!-- Pages will be rendered here -->
-                <div id="pdfPages" class="hidden"></div>
-            </div>
-
-            <!-- Zoom Controls (Floating) -->
-            <div class="absolute bottom-4 sm:bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 sm:py-2 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md rounded-full shadow-2xl border border-slate-200 dark:border-slate-700 z-50">
-                <button id="zoomOut" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors" title="Zoom Out">
-                    <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/></svg>
-                </button>
-                <span id="zoomLevel" class="text-xs sm:text-sm font-bold text-slate-700 dark:text-slate-200 min-w-[3rem] text-center">100%</span>
-                <button id="zoomIn" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors" title="Zoom In">
-                    <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-                </button>
-                <div class="w-px h-5 bg-slate-300 dark:bg-slate-600 mx-1"></div>
-                <button id="fitWidth" class="p-1.5 sm:p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-full transition-colors" title="Fit to Width">
-                    <svg class="w-4 h-4 sm:w-5 sm:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg>
-                </button>
+                <!-- Google Drive Preview Iframe -->
+                <iframe id="pdfIframe" class="hidden w-full h-full" allowfullscreen></iframe>
             </div>
         </div>
     </div>

@@ -96,7 +96,7 @@ app.get('/api/folders', async (req, res) => {
         });
         // Apply natural sort for proper ordering
         const sortedFolders = response.data.files.sort(naturalSort);
-        res.setHeader('Cache-Control', 'public, max-age=3600');
+        res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minutes cache
         res.json({ success: true, data: sortedFolders });
     } catch (error) { 
         console.error("Get Folders Error:", error.message);
@@ -132,8 +132,8 @@ app.get('/api/files/:folderId', async (req, res) => {
             downloadUrl: `/api/download/${f.id}`
         })).sort(naturalSort);
         
-        // Cache files for 30 minutes (mobile performance)
-        res.setHeader('Cache-Control', 'public, max-age=1800');
+        // Cache files for 5 minutes
+        res.setHeader('Cache-Control', 'public, max-age=300');
         res.json({ success: true, data: files });
     } catch (error) { 
         console.error("Get Files Error:", error.message);

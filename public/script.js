@@ -3,13 +3,7 @@ let searchTimeout;
 let cachedFolders = null;
 let cachedFiles = {}; // Cache files per folder for faster navigation
 let isMobile = window.innerWidth < 768;
-
-// PDF Viewer State
-let pdfDoc = null;
-let currentScale = 1.0;
-let renderedPages = new Map();
-let isRendering = false;
-let renderQueue = [];
+let currentFolderId = null; // Track current folder for refresh
 
 // Update isMobile on resize (debounced)
 let resizeTimeout;
@@ -50,17 +44,10 @@ const elements = {
     pdfModal: document.getElementById('pdfModal'),
     pdfTitle: document.getElementById('pdfTitle'),
     pdfLoading: document.getElementById('pdfLoading'),
-    pdfLoadProgress: document.getElementById('pdfLoadProgress'),
-    pdfPages: document.getElementById('pdfPages'),
-    pdfPagesContainer: document.getElementById('pdfPagesContainer'),
+    pdfIframe: document.getElementById('pdfIframe'),
+    pdfContainer: document.getElementById('pdfContainer'),
     closePdfBtn: document.getElementById('closePdfBtn'),
     pdfDownload: document.getElementById('pdfDownload'),
-    currentPage: document.getElementById('currentPage'),
-    totalPages: document.getElementById('totalPages'),
-    zoomIn: document.getElementById('zoomIn'),
-    zoomOut: document.getElementById('zoomOut'),
-    zoomLevel: document.getElementById('zoomLevel'),
-    fitWidth: document.getElementById('fitWidth'),
     logoContainer: document.getElementById('logoContainer'),
     mobileSearchTrigger: document.getElementById('mobileSearchTrigger'),
     searchBarContainer: document.getElementById('searchBarContainer'),
@@ -68,7 +55,8 @@ const elements = {
     rightNav: document.getElementById('rightNav'),
     searchInput: document.getElementById('searchInput'),
     searchResults: document.getElementById('searchResults'),
-    browseSubjectsBtn: document.getElementById('browseSubjectsBtn')
+    browseSubjectsBtn: document.getElementById('browseSubjectsBtn'),
+    refreshBtn: document.getElementById('refreshBtn')
 };
 
 // --- INITIALIZATION ---
@@ -120,21 +108,20 @@ function setupEventListeners() {
     }, { passive: true });
     elements.searchInput.addEventListener('input', handleSearch, { passive: true });
     
-    // PDF Viewer Controls
-    elements.zoomIn.addEventListener('click', () => setZoom(currentScale + 0.25), { passive: true });
-    elements.zoomOut.addEventListener('click', () => setZoom(currentScale - 0.25), { passive: true });
-    elements.fitWidth.addEventListener('click', fitToWidth, { passive: true });
+    // Refresh button - clears cache and reloads current folder
+    elements.refreshBtn.addEventListener('click', refreshCurrentFolder, { passive: true });
     
-    // Track current page on scroll
-    elements.pdfPagesContainer.addEventListener('scroll', updateCurrentPage, { passive: true });
-    
-    // Keyboard shortcuts for PDF viewer
+    // Keyboard shortcut to close PDF viewer
     document.addEventListener('keydown', (e) => {
-        if (!elements.pdfModal.classList.contains('hidden')) {
-            if (e.key === 'Escape') closePdf();
-            if (e.key === '+' || e.key === '=') { e.preventDefault(); setZoom(currentScale + 0.25); }
-            if (e.key === '-') { e.preventDefault(); setZoom(currentScale - 0.25); }
+        if (!elements.pdfModal.classList.contains('hidden') && e.key === 'Escape') {
+            closePdf();
         }
+    });
+    
+    // Hide loading when iframe loads
+    elements.pdfIframe.addEventListener('load', () => {
+        elements.pdfLoading.classList.add('hidden');
+        elements.pdfIframe.classList.remove('hidden');
     });
 }
 
@@ -213,6 +200,7 @@ function handleFolderClick(e) {
 }
 
 async function selectFolder(id, name) {
+    currentFolderId = id; // Track for refresh
     elements.welcomeState.classList.add('hidden');
     elements.contentHeader.classList.remove('hidden');
     elements.contentTitle.textContent = name;
@@ -248,6 +236,42 @@ async function selectFolder(id, name) {
     }
 }
 
+// Refresh current folder - clears cache and fetches fresh data from Google Drive
+async function refreshCurrentFolder() {
+    if (!currentFolderId) return;
+    
+    // Clear cache for current folder
+    delete cachedFiles[currentFolderId];
+    
+    // Animate refresh button
+    elements.refreshBtn.classList.add('animate-spin');
+    
+    // Show loading state
+    elements.filesGrid.innerHTML = '<div class="h-32 shimmer rounded-2xl"></div>'.repeat(isMobile ? 2 : 3);
+    elements.emptyState.classList.add('hidden');
+    
+    try {
+        const res = await fetch(API_BASE + '/files/' + currentFolderId, {
+            headers: { 'Cache-Control': 'no-cache' }
+        });
+        const data = await res.json();
+        if(data.success && data.data.length > 0) {
+            const sortedFiles = data.data.sort(naturalSort);
+            cachedFiles[currentFolderId] = sortedFiles;
+            renderFiles(sortedFiles);
+        } else {
+            elements.filesGrid.innerHTML = '';
+            elements.emptyState.classList.remove('hidden');
+        }
+    } catch(e) { 
+        console.error(e);
+        elements.filesGrid.innerHTML = '';
+        elements.emptyState.classList.remove('hidden');
+    } finally {
+        elements.refreshBtn.classList.remove('animate-spin');
+    }
+}
+
 function renderFiles(files) {
     const html = files.map(f => {
         const escapedName = escapeHtml(f.name.replace('.pdf', ''));
@@ -278,8 +302,8 @@ function handleFileClick(e) {
     if (card) openPdf(JSON.parse(card.dataset.file));
 }
 
-// --- MODAL ENGINE (PDF.js Viewer) ---
-async function openPdf(file) {
+// --- MODAL ENGINE (Google Drive PDF Viewer - Mobile Optimized) ---
+function openPdf(file) {
     if (!file || typeof file !== 'object') {
         console.error('Invalid file data');
         return;
@@ -292,191 +316,21 @@ async function openPdf(file) {
     
     // Reset viewer state
     elements.pdfLoading.classList.remove('hidden');
-    elements.pdfPages.classList.add('hidden');
-    elements.pdfPages.innerHTML = '';
-    elements.pdfLoadProgress.textContent = '0%';
-    elements.currentPage.textContent = '1';
-    elements.totalPages.textContent = '1';
-    pdfDoc = null;
-    renderedPages.clear();
-    renderQueue = [];
-    currentScale = isMobile ? 1.0 : 1.2;
+    elements.pdfIframe.classList.add('hidden');
+    elements.pdfIframe.src = '';
     
-    try {
-        // Dynamically import PDF.js
-        const pdfjsLib = await import('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.min.mjs');
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/pdf.worker.min.mjs';
-        
-        // Build the PDF URL - use the streaming endpoint
-        const pdfUrl = `/api/pdf/${file.id}`;
-        
-        // Load PDF with progress tracking
-        const loadingTask = pdfjsLib.getDocument({
-            url: pdfUrl,
-            cMapUrl: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.0.379/cmaps/',
-            cMapPacked: true,
-        });
-        
-        loadingTask.onProgress = (progress) => {
-            if (progress.total > 0) {
-                const percent = Math.round((progress.loaded / progress.total) * 100);
-                elements.pdfLoadProgress.textContent = `${percent}%`;
-            }
-        };
-        
-        pdfDoc = await loadingTask.promise;
-        elements.totalPages.textContent = pdfDoc.numPages;
-        
-        // Create page containers
-        for (let i = 1; i <= pdfDoc.numPages; i++) {
-            const wrapper = document.createElement('div');
-            wrapper.className = 'pdf-page-wrapper';
-            wrapper.id = `page-${i}`;
-            wrapper.dataset.page = i;
-            
-            const canvas = document.createElement('canvas');
-            canvas.className = 'pdf-page-canvas';
-            wrapper.appendChild(canvas);
-            elements.pdfPages.appendChild(wrapper);
-        }
-        
-        // Hide loading, show pages
-        elements.pdfLoading.classList.add('hidden');
-        elements.pdfPages.classList.remove('hidden');
-        
-        // Fit to width on initial load
-        await fitToWidth();
-        
-        // Set up intersection observer for lazy rendering
-        setupLazyRendering();
-        
-    } catch (error) {
-        console.error('PDF load error:', error);
-        elements.pdfLoadProgress.textContent = 'Failed to load PDF';
-    }
-}
-
-function setupLazyRendering() {
-    const observer = new IntersectionObserver((entries) => {
-        entries.forEach(entry => {
-            const pageNum = parseInt(entry.target.dataset.page);
-            if (entry.isIntersecting && !renderedPages.has(pageNum)) {
-                queueRenderPage(pageNum);
-            }
-        });
-    }, {
-        root: elements.pdfPagesContainer,
-        rootMargin: '200px 0px',
-        threshold: 0.01
-    });
-    
-    document.querySelectorAll('.pdf-page-wrapper').forEach(wrapper => {
-        observer.observe(wrapper);
-    });
-}
-
-async function queueRenderPage(pageNum) {
-    if (renderedPages.has(pageNum) || renderQueue.includes(pageNum)) return;
-    renderQueue.push(pageNum);
-    processRenderQueue();
-}
-
-async function processRenderQueue() {
-    if (isRendering || renderQueue.length === 0) return;
-    isRendering = true;
-    
-    const pageNum = renderQueue.shift();
-    await renderPage(pageNum);
-    
-    isRendering = false;
-    if (renderQueue.length > 0) {
-        requestAnimationFrame(() => processRenderQueue());
-    }
-}
-
-async function renderPage(pageNum) {
-    if (!pdfDoc || renderedPages.has(pageNum)) return;
-    
-    try {
-        const page = await pdfDoc.getPage(pageNum);
-        const wrapper = document.getElementById(`page-${pageNum}`);
-        const canvas = wrapper.querySelector('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        const viewport = page.getViewport({ scale: currentScale * window.devicePixelRatio });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        canvas.style.width = `${viewport.width / window.devicePixelRatio}px`;
-        canvas.style.height = `${viewport.height / window.devicePixelRatio}px`;
-        
-        await page.render({
-            canvasContext: ctx,
-            viewport: viewport
-        }).promise;
-        
-        renderedPages.set(pageNum, currentScale);
-    } catch (error) {
-        console.error(`Error rendering page ${pageNum}:`, error);
-    }
-}
-
-async function setZoom(newScale) {
-    newScale = Math.max(0.5, Math.min(3, newScale));
-    if (newScale === currentScale) return;
-    
-    currentScale = newScale;
-    elements.zoomLevel.textContent = `${Math.round(currentScale * 100)}%`;
-    
-    // Re-render all visible pages at new scale
-    renderedPages.clear();
-    renderQueue = [];
-    
-    // Clear and re-render
-    document.querySelectorAll('.pdf-page-wrapper').forEach(wrapper => {
-        const canvas = wrapper.querySelector('canvas');
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-    });
-    
-    setupLazyRendering();
-}
-
-async function fitToWidth() {
-    if (!pdfDoc) return;
-    
-    const page = await pdfDoc.getPage(1);
-    const viewport = page.getViewport({ scale: 1 });
-    const containerWidth = elements.pdfPagesContainer.clientWidth - 32; // Account for padding
-    const scale = containerWidth / viewport.width;
-    
-    await setZoom(scale);
-}
-
-function updateCurrentPage() {
-    const container = elements.pdfPagesContainer;
-    const scrollTop = container.scrollTop;
-    const wrappers = document.querySelectorAll('.pdf-page-wrapper');
-    
-    for (const wrapper of wrappers) {
-        const rect = wrapper.getBoundingClientRect();
-        const containerRect = container.getBoundingClientRect();
-        
-        if (rect.top <= containerRect.top + containerRect.height / 2 && 
-            rect.bottom >= containerRect.top) {
-            elements.currentPage.textContent = wrapper.dataset.page;
-            break;
-        }
-    }
+    // Use Google Drive's built-in PDF preview - works great on mobile
+    // Format: https://drive.google.com/file/d/{fileId}/preview
+    const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
+    elements.pdfIframe.src = previewUrl;
 }
 
 function closePdf() {
     document.body.classList.remove('modal-open');
     elements.pdfModal.classList.add('hidden');
     elements.pdfLoading.classList.add('hidden');
-    elements.pdfPages.innerHTML = '';
-    pdfDoc = null;
-    renderedPages.clear();
-    renderQueue = [];
+    elements.pdfIframe.classList.add('hidden');
+    elements.pdfIframe.src = ''; // Clear iframe to stop loading/playing
 }
 
 // --- SEARCH ENGINE ---
