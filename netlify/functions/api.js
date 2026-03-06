@@ -77,6 +77,11 @@ const initDriveClient = () => {
     } catch (e) { return null; }
 };
 
+// Natural sort helper for proper alphabetical + numerical ordering
+function naturalSort(a, b) {
+    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
 // 1. Get Folders
 app.get('/api/folders', async (req, res) => {
     try {
@@ -89,8 +94,10 @@ app.get('/api/folders', async (req, res) => {
             fields: 'files(id, name)',
             orderBy: 'name',
         });
+        // Apply natural sort for proper ordering
+        const sortedFolders = response.data.files.sort(naturalSort);
         res.setHeader('Cache-Control', 'public, max-age=3600');
-        res.json({ success: true, data: response.data.files });
+        res.json({ success: true, data: sortedFolders });
     } catch (error) { 
         console.error("Get Folders Error:", error.message);
         res.status(500).json({ success: false, error: 'Failed to retrieve folders' }); 
@@ -123,7 +130,10 @@ app.get('/api/files/:folderId', async (req, res) => {
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/view/${f.id}`,
             downloadUrl: `/api/download/${f.id}`
-        }));
+        })).sort(naturalSort);
+        
+        // Cache files for 30 minutes (mobile performance)
+        res.setHeader('Cache-Control', 'public, max-age=1800');
         res.json({ success: true, data: files });
     } catch (error) { 
         console.error("Get Files Error:", error.message);
@@ -177,8 +187,10 @@ app.get('/api/search', async (req, res) => {
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/view/${f.id}`,
             downloadUrl: `/api/download/${f.id}`
-        }));
+        })).sort(naturalSort);
 
+        // Cache search results for 15 minutes
+        res.setHeader('Cache-Control', 'public, max-age=900');
         res.json({ success: true, data: files });
     } catch (error) {
         console.error("Search API Error:", error.message);
@@ -211,4 +223,5 @@ app.get('/api/download/:fileId', (req, res) => {
     // Redirects browser to Google's direct download link
     res.redirect(`https://drive.google.com/uc?export=download&id=${fileId}`);
 });
+module.exports = app;
 module.exports.handler = serverless(app);
