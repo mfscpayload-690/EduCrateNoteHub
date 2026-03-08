@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
     <title>EduCrate |S4 CS2 Notes</title>
+    <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -15,13 +17,16 @@
         .shimmer { background: linear-gradient(90deg, #f1f5f9 25%, #e2e8f0 50%, #f1f5f9 75%); background-size: 200% 100%; animation: shim 1.5s infinite; }
         @keyframes shim { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
         .dark .shimmer { background: linear-gradient(90deg, #1e293b 25%, #334155 50%, #1e293b 75%); }
-        body.modal-open { overflow: hidden; position: fixed; width: 100%; }
-        /* Prevent overscroll bounce on iOS */
-        html, body { overscroll-behavior: none; }
+        body.modal-open { overflow: hidden; }
         /* Smooth scrolling for touch devices */
         * { -webkit-tap-highlight-color: transparent; }
         /* PDF Viewer Styles - Mobile Optimized */
         #pdfIframe { border: none; width: 100%; height: 100%; background: white; }
+        /* Pull-to-refresh indicator */
+        #pullRefreshIndicator { position: fixed; top: 64px; left: 50%; transform: translateX(-50%) translateY(-60px); z-index: 55; transition: transform 0.2s ease, opacity 0.2s ease; opacity: 0; pointer-events: none; }
+        #pullRefreshIndicator.visible { opacity: 1; }
+        #pullRefreshIndicator.refreshing svg { animation: spin 0.8s linear infinite; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 min-h-screen font-sans selection:bg-primary-100 dark:selection:bg-primary-900">
@@ -88,12 +93,7 @@
     <!-- Main Content -->
     <main class="md:ml-64 pt-16 min-h-screen">
         <div id="contentHeader" class="hidden p-6 md:p-8 bg-white dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800">
-            <div class="flex items-center justify-between">
-                <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
-                <button id="refreshBtn" class="p-2 text-slate-500 hover:text-primary-600 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all" title="Refresh files">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-                </button>
-            </div>
+            <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
         </div>
         
         <div class="p-6 md:p-8">
@@ -127,9 +127,9 @@
                     <h3 id="pdfTitle" class="font-bold dark:text-white truncate text-xs sm:text-sm">Document.pdf</h3>
                 </div>
                 <div class="flex items-center gap-1 sm:gap-2">
-                    <a id="pdfDownload" href="#" download class="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-primary-600 text-white rounded-lg sm:rounded-xl text-xs font-bold hover:bg-primary-700 transition-all">
+                    <a id="pdfDownload" href="#" class="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-primary-600 text-white rounded-lg sm:rounded-xl text-xs font-bold hover:bg-primary-700 transition-all">
                         <svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
-                        <span class="hidden sm:inline">DOWNLOAD</span>
+                        <span>DOWNLOAD</span>
                     </a>
                     <button id="closePdfBtn" class="p-1.5 sm:p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg sm:rounded-xl transition-colors">
                         <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
@@ -148,6 +148,12 @@
                 <iframe id="pdfIframe" class="hidden w-full h-full" allowfullscreen></iframe>
             </div>
         </div>
+    </div>
+
+    <!-- Pull-to-refresh indicator -->
+    <div id="pullRefreshIndicator" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
+        <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        <span id="pullRefreshText" class="text-xs font-bold text-slate-500 dark:text-slate-400">Pull to refresh</span>
     </div>
 
     <script src="script.js"></script>
