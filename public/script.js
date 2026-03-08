@@ -522,9 +522,8 @@ function openPdf(file) {
     elements.pdfIframe.classList.add('hidden');
     elements.pdfIframe.src = '';
 
-    // Use our API endpoint to stream PDF bytes - works in production
-    // This bypasses Google Drive iframe embedding restrictions
-    const previewUrl = file.viewUrl || `/api/pdf/${file.id}`;
+    // Use Google Drive's embedded preview viewer so the PDF opens within the page
+    const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
     elements.pdfIframe.src = previewUrl;
     
     // Push history state so back button/swipe closes the modal instead of leaving the site
