@@ -34,7 +34,15 @@ app.use(helmet({
 // Simple rate limiting using in-memory store (for serverless, consider external solution)
 const rateLimitStore = new Map();
 const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 30; // 30 requests per minute
+const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute (accounts for polling + thumbnails)
+
+// Periodic cleanup of expired rate limit entries (every 5 minutes)
+setInterval(() => {
+    const now = Date.now();
+    for (const [ip, record] of rateLimitStore) {
+        if (now > record.resetTime) rateLimitStore.delete(ip);
+    }
+}, 300000);
 
 app.use((req, res, next) => {
     const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
@@ -65,7 +73,10 @@ app.use((req, res, next) => {
 
 const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 
+// Cache the Drive client — no need to re-parse credentials on every request
+let cachedDriveClient = null;
 const initDriveClient = () => {
+    if (cachedDriveClient) return cachedDriveClient;
     try {
         const jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
         const credentials = JSON.parse(jsonStr.trim());
@@ -73,7 +84,8 @@ const initDriveClient = () => {
             credentials,
             scopes: ['https://www.googleapis.com/auth/drive.readonly'],
         });
-        return google.drive({ version: 'v3', auth });
+        cachedDriveClient = google.drive({ version: 'v3', auth });
+        return cachedDriveClient;
     } catch (e) { return null; }
 };
 
@@ -96,7 +108,7 @@ app.get('/api/folders', async (req, res) => {
         });
         // Apply natural sort for proper ordering
         const sortedFolders = response.data.files.sort(naturalSort);
-        res.setHeader('Cache-Control', 'public, max-age=300'); // 5 minutes cache
+        res.setHeader('Cache-Control', 'public, max-age=60'); // 1 minute cache for folders
         res.json({ success: true, data: sortedFolders });
     } catch (error) { 
         console.error("Get Folders Error:", error.message);
@@ -121,7 +133,7 @@ app.get('/api/files/:folderId', async (req, res) => {
         
         const response = await drive.files.list({
             q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
+            fields: 'files(id, name, size, thumbnailLink, hasThumbnail)',
             orderBy: 'name',
         });
         const files = response.data.files.map(f => ({
@@ -129,11 +141,12 @@ app.get('/api/files/:folderId', async (req, res) => {
             name: f.name,
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/view/${f.id}`,
-            downloadUrl: `/api/download/${f.id}`
+            downloadUrl: `/api/download/${f.id}`,
+            thumbnailUrl: f.hasThumbnail ? `/api/thumbnail/${f.id}` : null
         })).sort(naturalSort);
         
-        // Cache files for 5 minutes
-        res.setHeader('Cache-Control', 'public, max-age=300');
+        // Short cache to help with sync - 30 seconds
+        res.setHeader('Cache-Control', 'public, max-age=30');
         res.json({ success: true, data: files });
     } catch (error) { 
         console.error("Get Files Error:", error.message);
@@ -177,7 +190,7 @@ app.get('/api/search', async (req, res) => {
         // Use sanitized query - no need to escape single quotes as we've removed them
         const response = await drive.files.list({
             q: `name contains '${sanitizedQuery}' and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
+            fields: 'files(id, name, size, thumbnailLink, hasThumbnail)',
             pageSize: 10
         });
 
@@ -186,7 +199,8 @@ app.get('/api/search', async (req, res) => {
             name: f.name,
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/view/${f.id}`,
-            downloadUrl: `/api/download/${f.id}`
+            downloadUrl: `/api/download/${f.id}`,
+            thumbnailUrl: f.hasThumbnail ? `/api/thumbnail/${f.id}` : null
         })).sort(naturalSort);
 
         // Cache search results for 15 minutes
@@ -254,8 +268,9 @@ app.get('/api/pdf/:fileId', async (req, res) => {
         res.status(500).json({ success: false, error: 'Failed to fetch PDF' });
     }
 });
-// 5. Download PDF with validation
-app.get('/api/download/:fileId', (req, res) => {
+
+// 4c. Thumbnail proxy - fetches thumbnail from Drive and streams to client (bypasses CORS)
+app.get('/api/thumbnail/:fileId', async (req, res) => {
     const { fileId } = req.params;
     
     // Validate fileId format
@@ -263,8 +278,87 @@ app.get('/api/download/:fileId', (req, res) => {
         return res.status(400).json({ success: false, error: 'Invalid file ID' });
     }
     
-    // Redirects browser to Google's direct download link
-    res.redirect(`https://drive.google.com/uc?export=download&id=${fileId}`);
+    try {
+        const drive = initDriveClient();
+        if (!drive) {
+            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        }
+        
+        // Get the thumbnailLink from Drive
+        const meta = await drive.files.get({
+            fileId,
+            fields: 'thumbnailLink,hasThumbnail'
+        });
+        
+        if (!meta.data.hasThumbnail || !meta.data.thumbnailLink) {
+            return res.status(404).json({ success: false, error: 'No thumbnail available' });
+        }
+        
+        // Fetch the thumbnail image via the authenticated link
+        // Request a larger thumbnail (default is small, bump to 400px wide)
+        let thumbUrl = meta.data.thumbnailLink;
+        thumbUrl = thumbUrl.replace(/=s\d+$/, '=s400');
+        
+        const thumbResponse = await fetch(thumbUrl, {
+            signal: AbortSignal.timeout(10000)
+        });
+        
+        if (!thumbResponse.ok) {
+            return res.status(502).json({ success: false, error: 'Failed to fetch thumbnail from Drive' });
+        }
+        
+        const arrayBuffer = await thumbResponse.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        res.setHeader('Content-Type', thumbResponse.headers.get('content-type') || 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        res.send(buffer);
+    } catch (error) {
+        console.error('Thumbnail Error:', error.message);
+        res.status(500).json({ success: false, error: 'Failed to fetch thumbnail' });
+    }
+});
+
+// 5. Download PDF with validation - streams through server for mobile compatibility
+app.get('/api/download/:fileId', async (req, res) => {
+    const { fileId } = req.params;
+    
+    // Validate fileId format
+    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
+        return res.status(400).json({ success: false, error: 'Invalid file ID' });
+    }
+    
+    try {
+        const drive = initDriveClient();
+        if (!drive) {
+            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        }
+        
+        // Get file metadata to set proper filename
+        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
+        
+        if (meta.data.mimeType !== 'application/pdf') {
+            return res.status(400).json({ success: false, error: 'File is not a PDF' });
+        }
+        
+        // Stream the file content with attachment disposition to force download
+        const response = await drive.files.get(
+            { fileId, alt: 'media' },
+            { responseType: 'stream' }
+        );
+        
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        
+        if (meta.data.size) {
+            res.setHeader('Content-Length', meta.data.size);
+        }
+        
+        response.data.pipe(res);
+    } catch (error) {
+        console.error("Download Stream Error:", error.message);
+        res.status(500).json({ success: false, error: 'Failed to download PDF' });
+    }
 });
 module.exports = app;
 module.exports.handler = serverless(app);
