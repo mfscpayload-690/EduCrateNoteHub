@@ -75,18 +75,27 @@ const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 
 // Cache the Drive client — no need to re-parse credentials on every request
 let cachedDriveClient = null;
+let cachedAuth = null;
 const initDriveClient = () => {
     if (cachedDriveClient) return cachedDriveClient;
     try {
         const jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
         const credentials = JSON.parse(jsonStr.trim());
-        const auth = new google.auth.GoogleAuth({
+        cachedAuth = new google.auth.GoogleAuth({
             credentials,
             scopes: ['https://www.googleapis.com/auth/drive.readonly'],
         });
-        cachedDriveClient = google.drive({ version: 'v3', auth });
+        cachedDriveClient = google.drive({ version: 'v3', auth: cachedAuth });
         return cachedDriveClient;
     } catch (e) { return null; }
+};
+
+// Returns a valid Bearer access token for the service account
+const getAccessToken = async () => {
+    if (!cachedAuth) initDriveClient();
+    const client = await cachedAuth.getClient();
+    const tokenResponse = await client.getAccessToken();
+    return tokenResponse.token;
 };
 
 // Natural sort helper for proper alphabetical + numerical ordering
@@ -133,7 +142,7 @@ app.get('/api/files/:folderId', async (req, res) => {
         
         const response = await drive.files.list({
             q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size, thumbnailLink, hasThumbnail)',
+            fields: 'files(id, name, size)',
             orderBy: 'name',
         });
         const files = response.data.files.map(f => ({
@@ -142,7 +151,7 @@ app.get('/api/files/:folderId', async (req, res) => {
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/pdf/${f.id}`,
             downloadUrl: `/api/download/${f.id}`,
-            thumbnailUrl: f.hasThumbnail ? `/api/thumbnail/${f.id}` : null
+            thumbnailUrl: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`
         })).sort(naturalSort);
         
         // Short cache to help with sync - 30 seconds
@@ -190,7 +199,7 @@ app.get('/api/search', async (req, res) => {
         // Use sanitized query - no need to escape single quotes as we've removed them
         const response = await drive.files.list({
             q: `name contains '${sanitizedQuery}' and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size, thumbnailLink, hasThumbnail)',
+            fields: 'files(id, name, size)',
             pageSize: 10
         });
 
@@ -200,7 +209,7 @@ app.get('/api/search', async (req, res) => {
             size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
             viewUrl: `/api/pdf/${f.id}`,
             downloadUrl: `/api/download/${f.id}`,
-            thumbnailUrl: f.hasThumbnail ? `/api/thumbnail/${f.id}` : null
+            thumbnailUrl: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`
         })).sort(naturalSort);
 
         // Cache search results for 15 minutes
@@ -294,12 +303,16 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
             return res.status(404).json({ success: false, error: 'No thumbnail available' });
         }
         
-        // Fetch the thumbnail image via the authenticated link
+        // Fetch the thumbnail using the authenticated Drive client so auth is included
         // Request a larger thumbnail (default is small, bump to 400px wide)
         let thumbUrl = meta.data.thumbnailLink;
         thumbUrl = thumbUrl.replace(/=s\d+$/, '=s400');
-        
+
+        // Get a fresh access token from the cached service account auth
+        const accessToken = await getAccessToken();
+
         const thumbResponse = await fetch(thumbUrl, {
+            headers: { 'Authorization': `Bearer ${accessToken}` },
             signal: AbortSignal.timeout(10000)
         });
         
@@ -309,7 +322,7 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
         
         const arrayBuffer = await thumbResponse.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        res.setHeader('Content-Type', thumbResponse.headers.get('content-type') || 'image/png');
+        res.setHeader('Content-Type', thumbResponse.headers.get('content-type') || 'image/jpeg');
         res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
         res.send(buffer);
     } catch (error) {
@@ -361,4 +374,8 @@ app.get('/api/download/:fileId', async (req, res) => {
     }
 });
 module.exports = app;
-module.exports.handler = serverless(app);
+// Tell serverless-http to base64-encode binary responses (images) so Netlify Lambda
+// doesn't corrupt the bytes — this is what makes thumbnails work in production.
+module.exports.handler = serverless(app, {
+    binary: ['image/*', 'image/jpeg', 'image/png', 'image/webp', 'image/gif']
+});
