@@ -117,7 +117,7 @@ Git
    Then edit `.env` and add your credentials:
    ```env
    # Google Drive API Configuration
-   GOOGLE_SERVICE_ACCOUNT_JSON={"tyepe":"serviceaccount",.......}
+   GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
    
    # Server Configuration
    PORT=3000
@@ -141,8 +141,8 @@ Git
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/folders` | GET | Get all subject folders |
-| `/api/files/: folderId` | GET | Get files in a specific folder |
-| `/api/search? q=query` | GET | Search for files across all folders |
+| `/api/files/:folderId` | GET | Get files in a specific folder |
+| `/api/search?q=query` | GET | Search for files across all folders |
 
 ### 🚢 Deployment
 
@@ -153,7 +153,7 @@ Git
 3. Add environment variables in Netlify dashboard
 4. Deploy!
 
-[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/MabelMoncy/EduNotes)
+[![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/MabelMoncy/EduCrateNoteHub)
 
 ---
 
@@ -175,7 +175,7 @@ Experience EduCrate in action!  The live demo showcases all features including:
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome!  Feel free to check the [issues page](https://github.com/MabelMoncy/EduNotes/issues).
+Contributions, issues, and feature requests are welcome!  Feel free to check the [issues page](https://github.com/MabelMoncy/EduCrateNoteHub/issues).
 
 ### Steps to Contribute
 
@@ -220,8 +220,8 @@ This project is created for educational purposes.  Please credit the original au
 
 If you have any questions or need help, please: 
 
-- 🐛 [Open an Issue](https://github.com/MabelMoncy/EduNotes/issues)
-- 💬 Start a [Discussion](https://github.com/MabelMoncy/EduNotes/discussions)
+- 🐛 [Open an Issue](https://github.com/MabelMoncy/EduCrateNoteHub/issues)
+- 💬 Start a [Discussion](https://github.com/MabelMoncy/EduCrateNoteHub/discussions)
 - ⭐ Star this repository if you find it helpful! 
 
 ---
