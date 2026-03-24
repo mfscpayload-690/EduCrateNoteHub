@@ -1,0 +1,97 @@
+name: Netlify Production Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: netlify-production
+  cancel-in-progress: true
+
+jobs:
+  deploy-production:
+    name: Deploy Production and Smoke Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout (workflow_run commit)
+        if: ${{ github.event_name == 'workflow_run' }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Checkout (manual dispatch commit)
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Deploy to Netlify Production
+        id: deploy
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ] || [ -z "${NETLIFY_SITE_ID:-}" ]; then
+            echo "Missing required Netlify secrets"
+            exit 1
+          fi
+
+          npx netlify-cli@latest deploy \
+            --prod \
+            --dir=public \
+            --functions=netlify/functions \
+            --site="$NETLIFY_SITE_ID" \
+            --auth="$NETLIFY_AUTH_TOKEN" \
+            --json > netlify-production.json 2> netlify-production.err.log
+
+          PROD_URL=$(node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync('netlify-production.json','utf8'));console.log(j.url || j.deploy_url || '');")
+          if [ -z "$PROD_URL" ]; then
+            echo "Unable to resolve production URL from Netlify output"
+            cat netlify-production.json
+            exit 1
+          fi
+
+          echo "production_url=$PROD_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test homepage
+        env:
+          PROD_URL: ${{ steps.deploy.outputs.production_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location "$PROD_URL/" > /dev/null
+
+      - name: Smoke test API
+        env:
+          PROD_URL: ${{ steps.deploy.outputs.production_url }}
+        run: |
+          set -euo pipefail
+          curl --fail --show-error --silent --location "$PROD_URL/api/folders" > /dev/null
+
+      - name: Upload production deploy artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: netlify-production-logs-${{ github.run_id }}
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            netlify-production.json
+            netlify-production.err.log

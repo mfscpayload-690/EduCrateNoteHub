@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - '**'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate Code and Security
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run syntax checks
+        run: |
+          set -euo pipefail
+          node --check server.js
+          node --check netlify/functions/api.js
+          node --check public/script.js
+          node --check security-test.js
+          node --check test-drive.js
+
+      - name: Run security test suite
+        run: node security-test.js
+
+      - name: Run npm audit (high+)
+        run: npm audit --audit-level=high
+
+      - name: Upload CI logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-debug-${{ github.run_id }}
+          retention-days: 7
+          if-no-files-found: ignore
+          path: |
+            npm-debug.log*
+            **/*.log
