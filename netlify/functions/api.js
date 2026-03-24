@@ -3,6 +3,7 @@ const { google } = require('googleapis');
 const cors = require('cors');
 const serverless = require('serverless-http');
 const helmet = require('helmet');
+const { pipeline } = require('stream');
 
 const app = express();
 
@@ -271,7 +272,14 @@ app.get('/api/pdf/:fileId', async (req, res) => {
             res.setHeader('Content-Length', meta.data.size);
         }
         
-        response.data.pipe(res);
+        pipeline(response.data, res, (streamError) => {
+            if (streamError) {
+                console.error('PDF Stream Pipeline Error:', streamError.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ success: false, error: 'Failed to fetch PDF' });
+                }
+            }
+        });
     } catch (error) {
         console.error("PDF Stream Error:", error.message);
         res.status(500).json({ success: false, error: 'Failed to fetch PDF' });
@@ -367,7 +375,14 @@ app.get('/api/download/:fileId', async (req, res) => {
             res.setHeader('Content-Length', meta.data.size);
         }
         
-        response.data.pipe(res);
+        pipeline(response.data, res, (streamError) => {
+            if (streamError) {
+                console.error('Download Stream Pipeline Error:', streamError.message);
+                if (!res.headersSent) {
+                    res.status(500).json({ success: false, error: 'Failed to download PDF' });
+                }
+            }
+        });
     } catch (error) {
         console.error("Download Stream Error:", error.message);
         res.status(500).json({ success: false, error: 'Failed to download PDF' });
@@ -377,5 +392,13 @@ module.exports = app;
 // Tell serverless-http to base64-encode binary responses (images) so Netlify Lambda
 // doesn't corrupt the bytes — this is what makes thumbnails work in production.
 module.exports.handler = serverless(app, {
-    binary: ['image/*', 'image/jpeg', 'image/png', 'image/webp', 'image/gif']
+    binary: [
+        'application/pdf',
+        'application/octet-stream',
+        'image/*',
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif'
+    ]
 });
