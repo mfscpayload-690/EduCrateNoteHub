@@ -562,10 +562,33 @@ async function handleDownloadClick(e) {
     try {
         // Fetch PDF bytes through our server (bypasses Google account picker on mobile)
         const res = await fetch(API_BASE + '/download/' + fileId);
-        
-        if (!res.ok) throw new Error('Download failed');
-        
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+
+        if (!res.ok) {
+            let message = 'Download failed';
+            try {
+                if (contentType.includes('application/json')) {
+                    const errorData = await res.json();
+                    message = errorData.error || message;
+                } else {
+                    const errorText = await res.text();
+                    if (errorText) message = errorText;
+                }
+            } catch (_) {
+                // Ignore parse errors and keep fallback message
+            }
+            throw new Error(message);
+        }
+
+        if (!contentType.includes('application/pdf')) {
+            throw new Error('Invalid file format received');
+        }
+
         const blob = await res.blob();
+        if (!blob || blob.size === 0) {
+            throw new Error('Downloaded file is empty');
+        }
+
         const url = URL.createObjectURL(blob);
         
         // Create temporary link and trigger download
@@ -583,7 +606,7 @@ async function handleDownloadClick(e) {
         }, 100);
     } catch (err) {
         console.error('Download error:', err);
-        alert('Download failed. Please try again.');
+        alert(err.message || 'Download failed. Please try again.');
     } finally {
         // Restore button state
         btn.innerHTML = originalHTML;
