@@ -155,6 +155,32 @@ Git
 
 [![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/MabelMoncy/EduCrateNoteHub)
 
+#### GitHub Actions CI/CD
+
+This repository includes automated workflows in `.github/workflows/`:
+
+- `ci.yml`
+  - Runs on `pull_request` and `push`
+  - Executes syntax checks, `node security-test.js`, and `npm audit --audit-level=high`
+- `netlify-preview.yml`
+  - Runs on pull requests (`opened`, `synchronize`, `reopened`, `ready_for_review`)
+  - Deploys a Netlify preview and comments the preview URL on the PR
+- `netlify-production.yml`
+  - Runs after successful `CI` workflow on `main` (or manual `workflow_dispatch`)
+  - Deploys to Netlify production and performs smoke checks on:
+    - `/`
+    - `/api/folders`
+
+Required GitHub repository secrets:
+
+- `NETLIFY_AUTH_TOKEN`
+- `NETLIFY_SITE_ID`
+
+Recommended GitHub environment:
+
+- `production`
+  - Configure approval rules if you want manual gatekeeping before production deploy.
+
 ---
 
 ## 🌐 Live Demo
@@ -233,4 +259,3 @@ If you have any questions or need help, please:
 ⭐ Star this repo if you find it helpful! 
 
 </div>
-
