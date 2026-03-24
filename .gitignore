@@ -33,3 +33,5 @@ Thumbs.db
 tmp/
 temp/
 *.tmp
+env
+SELF_CONTEXT.md
