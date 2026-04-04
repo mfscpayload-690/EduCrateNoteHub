@@ -312,8 +312,8 @@ function areFilesEqual(a, b) {
 
 function renderFolders(folders) {
     const html = folders.map(f => 
-        '<button data-folder-id="' + escapeHtml(f.id) + '" data-folder-name="' + escapeHtml(f.name) + '" class="folder-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-slate-600 dark:text-slate-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-600 transition-all group active:scale-[0.98]">' +
-            '<svg class="w-5 h-5 opacity-50 group-hover:opacity-100 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' +
+        '<button data-folder-id="' + escapeHtml(f.id) + '" data-folder-name="' + escapeHtml(f.name) + '" class="folder-btn w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left text-slate-600 dark:text-slate-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 hover:text-primary-600 transition-all group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500/40">' +
+            '<svg class="w-5 h-5 opacity-60 group-hover:opacity-100 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' +
             '<span class="font-medium text-sm truncate">' + escapeHtml(f.name) + '</span>' +
         '</button>'
     ).join('');
@@ -481,19 +481,19 @@ function renderFiles(files) {
         const escapedSize = escapeHtml(f.size);
         const fileJson = JSON.stringify(f).replace(/'/g, '&#39;');
         
-        const thumbnailHtml = f.thumbnailUrl 
-            ? '<div class="w-full aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden mb-3">' +
+                const thumbnailHtml = f.thumbnailUrl 
+                        ? '<div class="w-full aspect-[16/9] bg-slate-100 dark:bg-black rounded-xl overflow-hidden mb-3">' +
                 '<img src="' + escapeHtml(f.thumbnailUrl) + '" alt="' + escapedName + '" class="w-full h-full object-cover object-top" loading="lazy" decoding="async" onerror="this.parentElement.innerHTML=\'<div class=\\\'flex items-center justify-center h-full text-red-400\\\'><svg class=\\\'w-12 h-12\\\' fill=\\\'currentColor\\\' viewBox=\\\'0 0 24 24\\\'><path d=\\\'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z\\\'/><path d=\\\'M14 2v6h6\\\'/></svg></div>\'">' +
               '</div>'
-            : '<div class="w-full aspect-[16/9] bg-slate-100 dark:bg-slate-800 rounded-xl overflow-hidden mb-3 flex items-center justify-center text-red-400">' +
+                        : '<div class="w-full aspect-[16/9] bg-slate-100 dark:bg-black rounded-xl overflow-hidden mb-3 flex items-center justify-center text-red-400">' +
                 '<svg class="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>' +
               '</div>';
         
-        return '<div class="file-card cursor-pointer bg-white dark:bg-slate-900 p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-slate-800 hover:shadow-xl hover:border-primary-400 transition-all group active:scale-[0.98]" data-file=\'' + fileJson + '\'>' +
+                return '<div class="file-card cursor-pointer bg-white/95 dark:bg-black p-3 sm:p-4 rounded-2xl border border-slate-200/80 dark:border-slate-800 hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-700 transition-all group" data-file=\'' + fileJson + '\'>' +
             thumbnailHtml +
             '<div class="px-1">' +
-                '<h4 class="font-bold dark:text-white truncate mb-1 text-sm sm:text-base leading-tight">' + escapedName + '</h4>' +
-                '<p class="text-xs text-slate-400 font-medium">' + escapedSize + '</p>' +
+                '<h4 class="font-semibold dark:text-white truncate mb-1 text-sm sm:text-base leading-tight">' + escapedName + '</h4>' +
+                '<p class="text-xs text-slate-500 dark:text-slate-400 font-medium">' + escapedSize + '</p>' +
             '</div>' +
         '</div>';
     }).join('');
@@ -656,7 +656,7 @@ function renderSearchResults(results) {
         const fileJson = JSON.stringify(f).replace(/'/g, '&#39;');
         return '<div id="searchResult-' + index + '" role="option" aria-selected="false" tabindex="-1" class="search-result cursor-pointer p-3 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors active:bg-slate-100 dark:active:bg-slate-600" data-file=\'' + fileJson + '\'>' +
             '<svg class="w-4 h-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>' +
-            '<span class="text-xs font-medium dark:text-slate-200 truncate">' + escapedName + '</span>' +
+            '<span class="text-sm font-medium dark:text-slate-200 truncate">' + escapedName + '</span>' +
         '</div>';
     }).join('');
     

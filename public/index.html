@@ -249,8 +249,8 @@
 <body class="min-h-screen font-sans selection:bg-primary-100 dark:selection:bg-primary-900">
     
     <!-- Navigation -->
-    <nav class="fixed top-0 left-0 right-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-[60]">
-    <div class="flex items-center justify-between px-4 h-16 max-w-7xl mx-auto">
+    <nav class="fixed top-0 left-0 right-0 bg-white/90 dark:bg-black/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 z-[60]">
+    <div class="flex items-center justify-between px-4 md:px-6 h-16 max-w-7xl mx-auto">
         
         <!-- Left Section: Menu & Logo -->
         <div id="logoContainer" class="flex items-center gap-3 transition-all duration-300">
@@ -258,7 +258,7 @@
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <a href="/" class="flex items-center">
-                <span class="text-xl font-extrabold text-primary-600 dark:text-primary-400 tracking-tight">EduCrate</span>
+                <span class="text-lg sm:text-xl font-bold text-primary-600 dark:text-primary-400 tracking-tight">EduCrate</span>
             </a>
         </div>
 
@@ -269,7 +269,7 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             </button>
 
-            <div class="relative w-full max-w-md">
+            <div class="relative w-full max-w-lg">
                 <!-- Actual Search Input -->
                 <div id="searchBarContainer" class="hidden md:block relative w-full">
                     <input type="text" id="searchInput" aria-label="Search notes" aria-autocomplete="list" aria-expanded="false" aria-controls="searchResults" placeholder="Search notes..." class="w-full pl-4 pr-10 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-xl text-sm focus:ring-2 focus:ring-primary-500 dark:text-white outline-none transition-all">
@@ -294,9 +294,9 @@
     
     <!-- Sidebar -->
     <div id="sidebarOverlay" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 hidden"></div>
-    <aside id="sidebar" class="fixed left-0 top-16 bottom-0 w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-30 -translate-x-full md:translate-x-0 transition-transform duration-300">
-        <div class="p-4 flex flex-col h-full">
-            <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4 px-2">Subjects</h2>
+    <aside id="sidebar" class="fixed left-0 top-16 bottom-0 w-72 bg-white dark:bg-black border-r border-slate-200 dark:border-slate-800 z-30 -translate-x-full md:translate-x-0 transition-transform duration-300">
+        <div class="p-5 flex flex-col h-full">
+            <h2 class="text-[11px] font-semibold text-slate-400 uppercase tracking-[0.16em] mb-4 px-2">Subjects</h2>
             <div id="foldersList" class="space-y-1 flex-1 overflow-y-auto">
                 <div class="p-2 space-y-3"><div class="h-9 shimmer rounded-lg"></div><div class="h-9 shimmer rounded-lg"></div></div>
             </div>
@@ -310,35 +310,35 @@
     </aside>
     
     <!-- Main Content -->
-    <main class="md:ml-64 pt-16 min-h-screen">
-        <div id="contentHeader" class="hidden p-6 md:p-8 bg-white dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800">
-            <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
+    <main class="md:ml-72 pt-16 min-h-screen">
+        <div id="contentHeader" class="hidden px-6 py-5 md:px-8 md:py-6 bg-white/80 dark:bg-black/80 backdrop-blur-sm border-b border-slate-200/70 dark:border-slate-800">
+            <h1 id="contentTitle" class="text-2xl md:text-3xl font-semibold dark:text-white tracking-tight">Subject</h1>
         </div>
         
-        <div class="p-6 md:p-8">
-            <div id="welcomeState" class="flex flex-col items-center justify-center py-24 text-center">
+        <div class="p-5 md:p-8">
+            <div id="welcomeState" class="flex flex-col items-center justify-center py-20 md:py-24 text-center">
                 <div class="w-20 h-20 rounded-[2rem] flex items-center justify-center mb-8 overflow-hidden">
                     <img src="/logo.png" alt="EduCrate" width="80" height="80" class="w-full h-full object-cover" loading="lazy" decoding="async">
                 </div>
-                <h2 class="text-3xl font-extrabold dark:text-white mb-3">Welcome to EduCrate</h2>
-                <p class="text-slate-500 max-w-sm mx-auto leading-relaxed mb-6">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
-                <button id="browseSubjectsBtn" class="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 hover:scale-105 transition-all shadow-lg shadow-primary-500/30 active:scale-95">
+                <h2 class="text-2xl md:text-3xl font-semibold dark:text-white mb-3 tracking-tight">Welcome to EduCrate</h2>
+                <p class="text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed mb-7">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
+                <button id="browseSubjectsBtn" class="focus-ring inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                     Browse Subjects
                 </button>
             </div>
             
-            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
-            <div id="emptyState" class="hidden text-center py-20 text-slate-400 font-medium">No notes uploaded to this section yet.</div>
+            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-5"></div>
+            <div id="emptyState" class="hidden text-center py-20 text-slate-500 dark:text-slate-400 font-medium">No notes uploaded to this section yet.</div>
         </div>
     </main>
     
     <!-- PDF VIEWER MODAL - Mobile Optimized with Google Drive Preview -->
     <div id="pdfModal" class="fixed inset-0 z-[100] hidden flex flex-col">
-        <div class="absolute inset-0 bg-slate-950/95 backdrop-blur-sm" id="modalBackdrop"></div>
+        <div class="absolute inset-0 bg-black/95 backdrop-blur-sm" id="modalBackdrop"></div>
         <div class="relative flex flex-col h-full w-full overflow-hidden">
             <!-- Modal Header -->
-            <div class="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50">
+            <div class="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 bg-white/95 dark:bg-black/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50">
                 <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                     <div class="bg-red-500 p-1 sm:p-1.5 rounded shadow-lg shadow-red-500/20 flex-shrink-0">
                         <svg class="w-3 h-3 sm:w-4 sm:h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>
@@ -357,7 +357,7 @@
             </div>
 
             <!-- PDF Iframe Container -->
-            <div id="pdfContainer" class="flex-1 overflow-hidden bg-slate-200 dark:bg-slate-950">
+            <div id="pdfContainer" class="flex-1 overflow-hidden bg-slate-200 dark:bg-black">
                 <!-- Loading State -->
                 <div id="pdfLoading" class="flex flex-col items-center justify-center h-full">
                     <div class="w-10 h-10 sm:w-12 sm:h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -370,7 +370,7 @@
     </div>
 
     <!-- Pull-to-refresh indicator -->
-    <div id="pullRefreshIndicator" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
+    <div id="pullRefreshIndicator" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-black rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
         <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         <span id="pullRefreshText" class="text-xs font-bold text-slate-500 dark:text-slate-400">Pull to refresh</span>
     </div>
