@@ -2,6 +2,7 @@ const API_BASE = '/api';
 let searchTimeout;
 let cachedFolders = null;
 let cachedFiles = {}; // Cache files per folder for faster navigation
+let activeSearchIndex = -1;
 let isMobile = window.innerWidth < 768;
 let currentFolderId = null; // Track current folder for refresh
 let currentFolderName = null; // Track current folder name
@@ -62,7 +63,8 @@ const elements = {
     searchResults: document.getElementById('searchResults'),
     browseSubjectsBtn: document.getElementById('browseSubjectsBtn'),
     pullRefreshIndicator: document.getElementById('pullRefreshIndicator'),
-    pullRefreshText: document.getElementById('pullRefreshText')
+    pullRefreshText: document.getElementById('pullRefreshText'),
+    themeColorMeta: document.querySelector('meta[name="theme-color"]')
 };
 
 // --- INITIALIZATION ---
@@ -116,6 +118,7 @@ function setupEventListeners() {
         }
     }, { passive: true });
     elements.searchInput.addEventListener('input', handleSearch, { passive: true });
+    elements.searchInput.addEventListener('keydown', handleSearchKeydown);
     
     // Pull-to-refresh for mobile
     setupPullToRefresh();
@@ -186,17 +189,24 @@ function initTheme() {
     const isDark = localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.classList.toggle('dark', isDark);
     updateThemeIcons(isDark);
+    updateThemeColor(isDark);
 }
 
 function toggleTheme() {
     const isDark = document.documentElement.classList.toggle('dark');
     localStorage.theme = isDark ? 'dark' : 'light';
     updateThemeIcons(isDark);
+    updateThemeColor(isDark);
 }
 
 function updateThemeIcons(isDark) {
     elements.sunIcon.classList.toggle('hidden', !isDark);
     elements.moonIcon.classList.toggle('hidden', isDark);
+}
+
+function updateThemeColor(isDark) {
+    if (!elements.themeColorMeta) return;
+    elements.themeColorMeta.setAttribute('content', isDark ? '#07091f' : '#f6f8ff');
 }
 
 // --- DATA ENGINE ---
@@ -619,6 +629,8 @@ function handleSearch(e) {
     const q = e.target.value.trim();
     clearTimeout(searchTimeout);
     if(q.length < 2) { 
+        activeSearchIndex = -1;
+        elements.searchInput.setAttribute('aria-expanded', 'false');
         elements.searchResults.classList.add('hidden'); 
         return; 
     }
@@ -630,6 +642,8 @@ function handleSearch(e) {
             if(data.success && data.data.length > 0) {
                 renderSearchResults(data.data.sort(naturalSort));
             } else {
+                activeSearchIndex = -1;
+                elements.searchInput.setAttribute('aria-expanded', 'false');
                 elements.searchResults.classList.add('hidden');
             }
         } catch(e) { console.error(e); }
@@ -637,21 +651,62 @@ function handleSearch(e) {
 }
 
 function renderSearchResults(results) {
-    const html = results.map(f => {
+    const html = results.map((f, index) => {
         const escapedName = escapeHtml(f.name);
         const fileJson = JSON.stringify(f).replace(/'/g, '&#39;');
-        return '<div class="search-result cursor-pointer p-3 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors active:bg-slate-100 dark:active:bg-slate-600" data-file=\'' + fileJson + '\'>' +
+        return '<div id="searchResult-' + index + '" role="option" aria-selected="false" tabindex="-1" class="search-result cursor-pointer p-3 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3 border-b border-slate-100 dark:border-slate-700 last:border-0 transition-colors active:bg-slate-100 dark:active:bg-slate-600" data-file=\'' + fileJson + '\'>' +
             '<svg class="w-4 h-4 text-red-500 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>' +
             '<span class="text-xs font-medium dark:text-slate-200 truncate">' + escapedName + '</span>' +
         '</div>';
     }).join('');
     
     requestAnimationFrame(() => {
+        activeSearchIndex = -1;
         elements.searchResults.removeEventListener('click', handleSearchResultClick);
         elements.searchResults.innerHTML = html;
         elements.searchResults.classList.remove('hidden');
+        elements.searchInput.setAttribute('aria-expanded', 'true');
         elements.searchResults.addEventListener('click', handleSearchResultClick, { passive: true });
     });
+}
+
+function handleSearchKeydown(e) {
+    const results = elements.searchResults.querySelectorAll('.search-result');
+    if (!results.length || elements.searchResults.classList.contains('hidden')) return;
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActiveSearchResult((activeSearchIndex + 1) % results.length);
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActiveSearchResult((activeSearchIndex - 1 + results.length) % results.length);
+    } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const targetIndex = activeSearchIndex >= 0 ? activeSearchIndex : 0;
+        const target = results[targetIndex];
+        if (target) openPdf(JSON.parse(target.dataset.file));
+    } else if (e.key === 'Escape') {
+        activeSearchIndex = -1;
+        elements.searchInput.setAttribute('aria-expanded', 'false');
+        elements.searchResults.classList.add('hidden');
+    }
+}
+
+function setActiveSearchResult(index) {
+    const results = elements.searchResults.querySelectorAll('.search-result');
+    if (!results.length) return;
+
+    results.forEach((item, itemIndex) => {
+        const isActive = itemIndex === index;
+        item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        item.classList.toggle('bg-slate-100', isActive);
+        item.classList.toggle('dark:bg-slate-600', isActive);
+    });
+
+    activeSearchIndex = index;
+    const activeEl = results[activeSearchIndex];
+    elements.searchInput.setAttribute('aria-activedescendant', activeEl.id);
+    activeEl.scrollIntoView({ block: 'nearest' });
 }
 
 function handleSearchResultClick(e) {
