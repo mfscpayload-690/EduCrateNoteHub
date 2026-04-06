@@ -25,7 +25,7 @@
         /* Smooth scrolling for touch devices */
         * { -webkit-tap-highlight-color: transparent; }
         /* PDF Viewer Styles - Mobile Optimized */
-        #pdfIframe { border: none; width: 100%; height: 100%; background: white; }
+        #pdfIframe { border: none; display: block; width: 100%; height: 100%; min-height: 100%; background: white; }
         /* Pull-to-refresh indicator */
         #pullRefreshIndicator { position: fixed; top: 64px; left: 50%; transform: translateX(-50%) translateY(-60px); z-index: 55; transition: transform 0.2s ease, opacity 0.2s ease; opacity: 0; pointer-events: none; }
         #pullRefreshIndicator.visible { opacity: 1; }
@@ -33,9 +33,11 @@
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
         :root {
+            --app-vh: 1vh;
             --bg-0: #f6f8ff;
             --bg-1: #eef2ff;
             --bg-2: #e6ebff;
+            --chat-panel-width: 380px;
             --acc-1: #7b5cff;
             --acc-2: #4fd1ff;
             --acc-3: #ff5da2;
@@ -71,6 +73,12 @@
                 linear-gradient(145deg, var(--bg-0), var(--bg-1) 45%, var(--bg-2));
             position: relative;
             overflow-x: hidden;
+        }
+
+        body.chat-resizing,
+        body.chat-resizing * {
+            cursor: col-resize !important;
+            user-select: none !important;
         }
 
         body::before {
@@ -222,6 +230,51 @@
             color: var(--text-main) !important;
         }
 
+        #pdfModal {
+            height: calc(var(--app-vh) * 100);
+            height: 100dvh;
+        }
+
+        #pdfModal .relative.flex.flex-col.h-full.w-full.overflow-hidden,
+        #pdfContainer,
+        #pdfViewerPane,
+        #chatPanel,
+        #chatMessages {
+            min-height: 0;
+        }
+
+        #chatPanel {
+            width: min(100vw, 24rem);
+        }
+
+        #chatResizeHandle {
+            touch-action: none;
+        }
+
+        .chat-line-clamp-2 {
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        @media (min-width: 768px) {
+            #chatPanel {
+                width: var(--chat-panel-width);
+                max-width: none;
+            }
+        }
+
+        @media (max-width: 767px) {
+            #pdfModal .flex.items-center.justify-between {
+                padding-top: calc(0.5rem + env(safe-area-inset-top));
+            }
+
+            #chatPanel {
+                padding-bottom: env(safe-area-inset-bottom);
+            }
+        }
+
         html:not(.dark) .text-slate-400,
         html:not(.dark) .text-slate-500,
         html:not(.dark) .text-slate-600,
@@ -284,17 +337,21 @@
             <button id="mobileSearchTrigger" aria-label="Open search" class="md:hidden p-2.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
             </button>
-            <span id="authUserLabel" class="hidden max-w-[180px] truncate text-xs font-medium text-slate-600 dark:text-slate-300 px-2"></span>
-            <button id="authOpenBtn" class="px-3 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">
-                Sign in
-            </button>
-            <button id="authLogoutBtn" class="hidden px-3 py-2 rounded-xl text-xs font-semibold text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 transition-all">
-                Logout
-            </button>
             <button id="themeToggle" aria-label="Toggle theme" class="p-2.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">
                 <svg id="sunIcon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
                 <svg id="moonIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
             </button>
+            <div id="accountMenu" class="relative">
+                <button id="accountMenuBtn" aria-label="Account menu" class="p-2.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent hover:border-slate-300 dark:hover:border-slate-700">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A8.966 8.966 0 0112 15a8.966 8.966 0 016.879 2.804M15 11a3 3 0 11-6 0 3 3 0 016 0zm6 1a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </button>
+                <div id="accountMenuDropdown" class="hidden absolute right-0 mt-2 w-64 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-black/95 backdrop-blur-md shadow-2xl p-3">
+                    <p class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Account</p>
+                    <p id="accountMenuEmail" class="text-xs text-slate-700 dark:text-slate-200 truncate mb-3">Not signed in</p>
+                    <button id="accountSignInBtn" class="w-full px-3 py-2 rounded-xl bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-colors">Sign in / Sign up</button>
+                    <button id="accountSignOutBtn" class="hidden w-full mt-2 px-3 py-2 rounded-xl border border-red-300 text-red-500 text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">Logout</button>
+                </div>
+            </div>
         </div>
     </div>
 </nav>
@@ -367,8 +424,8 @@
             </div>
 
             <!-- PDF Iframe Container -->
-            <div id="pdfContainer" class="flex-1 overflow-hidden bg-slate-200 dark:bg-black relative md:flex">
-                <div id="pdfViewerPane" class="flex-1 overflow-hidden relative">
+            <div id="pdfContainer" class="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden bg-slate-200 dark:bg-black relative">
+                <div id="pdfViewerPane" class="flex-1 min-h-0 overflow-hidden relative">
                     <!-- Loading State -->
                     <div id="pdfLoading" class="flex flex-col items-center justify-center h-full">
                         <div class="w-10 h-10 sm:w-12 sm:h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -379,7 +436,10 @@
                 </div>
 
                 <div id="chatPanelOverlay" class="hidden absolute inset-0 bg-black/45 md:hidden z-40"></div>
-                <aside id="chatPanel" class="fixed md:static top-0 right-0 bottom-0 w-full max-w-sm md:max-w-none md:w-[380px] bg-white/95 dark:bg-black/95 border-l border-slate-200 dark:border-slate-800 z-50 transform translate-x-full md:translate-x-0 transition-transform duration-300 flex flex-col">
+                <div id="chatResizeHandle" class="hidden md:flex w-2 items-center justify-center cursor-col-resize bg-transparent hover:bg-primary-500/15 transition-colors">
+                    <div class="h-14 w-1 rounded-full bg-slate-300 dark:bg-slate-700"></div>
+                </div>
+                <aside id="chatPanel" class="fixed md:static top-0 right-0 bottom-0 bg-white/95 dark:bg-black/95 border-l border-slate-200 dark:border-slate-800 z-50 transform translate-x-full md:translate-x-0 transition-transform duration-300 flex flex-col">
                     <div class="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-800">
                         <div class="min-w-0">
                             <p class="text-[11px] uppercase tracking-widest text-slate-400">Chat</p>
@@ -392,7 +452,7 @@
 
                     <div class="p-3 border-b border-slate-200 dark:border-slate-800">
                         <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Conversations</p>
-                        <div id="chatConversationList" class="max-h-36 overflow-y-auto space-y-2">
+                        <div id="chatConversationList" class="max-h-44 overflow-y-auto space-y-2 pr-1">
                             <p class="text-xs text-slate-500 dark:text-slate-400">Sign in to load conversations.</p>
                         </div>
                     </div>

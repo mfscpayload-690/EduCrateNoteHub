@@ -1,6 +1,12 @@
 (function (global) {
     const API_BASE = '/api';
     const SEND_DEBOUNCE_MS = 250;
+    const ASSISTANT_STREAM_STEP_MS = 14;
+    const ASSISTANT_STREAM_CHUNK_SIZE = 6;
+    const CHAT_PANEL_MIN_WIDTH = 320;
+    const CHAT_PANEL_MAX_WIDTH = 560;
+    const CHAT_PANEL_WIDTH_STORAGE_KEY = 'educrate-chat-panel-width';
+    const AUTH_PROMPT_STORAGE_KEY = 'educrate-auth-prompted';
 
     const state = {
         currentUser: null,
@@ -11,7 +17,9 @@
         messagesCursor: null,
         isSending: false,
         pendingSendTimer: null,
-        pendingRetryContent: null
+        pendingRetryContent: null,
+        activeConversationMenuId: null,
+        isResizingChat: false
     };
 
     const elements = {};
@@ -39,15 +47,32 @@
         }
     }
 
-    function createMessageNode(message, isOptimistic) {
+    function isNearBottom(threshold) {
+        if (!elements.chatMessages) return true;
+        const distance = elements.chatMessages.scrollHeight - elements.chatMessages.scrollTop - elements.chatMessages.clientHeight;
+        return distance <= (Number.isFinite(threshold) ? threshold : 96);
+    }
+
+    function scrollToBottom(force) {
+        if (!elements.chatMessages) return;
+        if (!force && !isNearBottom(180)) return;
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    }
+
+    function wait(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function createMessageNode(message, isOptimistic, options) {
+        const opts = options || {};
         const wrapper = document.createElement('div');
         const isUser = message.role === 'user';
 
         wrapper.className = [
-            'max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed shadow-sm',
+            'max-w-[90%] rounded-2xl px-3 py-2.5 text-sm leading-relaxed shadow-sm border',
             isUser
-                ? 'ml-auto bg-primary-600 text-white'
-                : 'mr-auto bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                ? 'ml-auto bg-primary-600 text-white border-primary-500'
+                : 'mr-auto bg-slate-100/95 dark:bg-slate-800/95 border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100'
         ].join(' ');
 
         if (isOptimistic) {
@@ -55,8 +80,9 @@
         }
 
         const text = document.createElement('p');
-        text.className = 'whitespace-pre-wrap break-words';
-        text.textContent = normalizeMessageText(message);
+        text.className = 'whitespace-pre-wrap break-words leading-6';
+        text.dataset.messageContent = 'true';
+        text.textContent = opts.placeholder ? 'Thinking...' : normalizeMessageText(message);
         wrapper.appendChild(text);
 
         if (message.error) {
@@ -88,8 +114,37 @@
             .replace(/__(.*?)__/g, '$1')
             .replace(/`([^`]+)`/g, '$1')
             .replace(/^\s*[-*]\s+/gm, '• ')
+            .replace(/^\s*\d+\.\s+/gm, '• ')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
+    }
+
+    async function streamAssistantText(node, fullText) {
+        if (!node) return;
+
+        const textEl = node.querySelector('[data-message-content]');
+        if (!textEl) return;
+
+        const cleanText = String(fullText || '').trim();
+        if (!cleanText) {
+            textEl.textContent = '';
+            return;
+        }
+
+        const prefersReducedMotion = global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        if (prefersReducedMotion || cleanText.length < 40) {
+            textEl.textContent = cleanText;
+            scrollToBottom(true);
+            return;
+        }
+
+        let index = 0;
+        while (index < cleanText.length) {
+            index = Math.min(cleanText.length, index + ASSISTANT_STREAM_CHUNK_SIZE);
+            textEl.textContent = cleanText.slice(0, index);
+            scrollToBottom(isNearBottom(220));
+            await wait(ASSISTANT_STREAM_STEP_MS);
+        }
     }
 
     function renderMessages(messages) {
@@ -107,25 +162,21 @@
         const frag = document.createDocumentFragment();
         messages.forEach((message) => frag.appendChild(createMessageNode(message, false)));
         elements.chatMessages.appendChild(frag);
-        scrollToBottom();
+        scrollToBottom(true);
     }
 
-    function appendMessage(message, isOptimistic) {
+    function appendMessage(message, isOptimistic, options) {
         if (!elements.chatMessages) return;
+        const shouldStick = isNearBottom(220);
         const empty = elements.chatMessages.querySelector('p.text-xs.text-slate-500');
         if (empty) {
             empty.remove();
         }
 
-        const node = createMessageNode(message, Boolean(isOptimistic));
+        const node = createMessageNode(message, Boolean(isOptimistic), options);
         elements.chatMessages.appendChild(node);
-        scrollToBottom();
+        scrollToBottom(shouldStick);
         return node;
-    }
-
-    function scrollToBottom() {
-        if (!elements.chatMessages) return;
-        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
     }
 
     function setComposerDisabled(disabled) {
@@ -134,6 +185,7 @@
         elements.chatSendBtn.disabled = disabled;
         elements.chatSendBtn.classList.toggle('opacity-60', disabled);
         elements.chatSendBtn.classList.toggle('cursor-not-allowed', disabled);
+        elements.chatSendBtn.textContent = disabled && state.isSending ? 'Sending...' : 'Send';
     }
 
     async function apiFetch(path, options) {
@@ -187,6 +239,7 @@
     async function refreshConversations() {
         if (!state.currentUser) {
             state.conversations = [];
+            state.activeConversationMenuId = null;
             renderConversations();
             return;
         }
@@ -194,6 +247,7 @@
         const data = await apiFetch('/chat/conversations?limit=20');
         state.conversations = Array.isArray(data.items) ? data.items : [];
         state.conversationCursor = data.nextCursor || null;
+        state.activeConversationMenuId = null;
         renderConversations();
     }
 
@@ -214,16 +268,18 @@
         state.conversations.forEach((conversation) => {
             const item = document.createElement('div');
             item.className = [
-                'rounded-xl border border-slate-200 dark:border-slate-700 p-2',
-                state.currentConversationId === conversation.id ? 'bg-primary-50 dark:bg-primary-900/20' : 'bg-white/70 dark:bg-black/40'
+                'relative rounded-2xl border p-2.5',
+                state.currentConversationId === conversation.id
+                    ? 'bg-primary-50/90 dark:bg-primary-900/25 border-primary-300/70 dark:border-primary-700'
+                    : 'bg-white/70 dark:bg-black/45 border-slate-200 dark:border-slate-700'
             ].join(' ');
 
             const topRow = document.createElement('div');
-            topRow.className = 'flex items-start justify-between gap-2';
+            topRow.className = 'flex items-start gap-2';
 
             const openBtn = document.createElement('button');
             openBtn.type = 'button';
-            openBtn.className = 'text-left flex-1';
+            openBtn.className = 'text-left flex-1 min-w-0';
             openBtn.dataset.conversationId = conversation.id;
 
             const title = document.createElement('p');
@@ -231,7 +287,7 @@
             title.textContent = conversation.title || conversation.pdfName || 'Untitled chat';
 
             const preview = document.createElement('p');
-            preview.className = 'text-[11px] text-slate-500 dark:text-slate-400 truncate mt-1';
+            preview.className = 'chat-line-clamp-2 text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-4';
             preview.textContent = conversation.lastMessagePreview || conversation.pdfName || 'No preview yet';
 
             const stamp = document.createElement('time');
@@ -244,22 +300,38 @@
             topRow.appendChild(openBtn);
 
             const actionWrap = document.createElement('div');
-            actionWrap.className = 'flex items-center gap-1';
+            actionWrap.className = 'relative flex-shrink-0';
+
+            const actionBtn = document.createElement('button');
+            actionBtn.type = 'button';
+            actionBtn.dataset.convMenuToggle = conversation.id;
+            actionBtn.className = 'h-7 w-7 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800';
+            actionBtn.setAttribute('aria-label', 'Conversation actions');
+            actionBtn.textContent = '⋯';
+
+            const menu = document.createElement('div');
+            menu.dataset.convMenu = conversation.id;
+            menu.className = [
+                'hidden absolute right-0 top-8 z-20 w-28 rounded-xl border border-slate-200 dark:border-slate-700',
+                'bg-white dark:bg-slate-900 shadow-xl overflow-hidden'
+            ].join(' ');
 
             const renameBtn = document.createElement('button');
             renameBtn.type = 'button';
             renameBtn.dataset.renameConversationId = conversation.id;
-            renameBtn.className = 'px-2 py-1 rounded border border-slate-300 dark:border-slate-600 text-[10px]';
+            renameBtn.className = 'w-full text-left px-3 py-2 text-[11px] text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800';
             renameBtn.textContent = 'Rename';
 
             const deleteBtn = document.createElement('button');
             deleteBtn.type = 'button';
             deleteBtn.dataset.deleteConversationId = conversation.id;
-            deleteBtn.className = 'px-2 py-1 rounded border border-red-300 text-red-500 text-[10px]';
+            deleteBtn.className = 'w-full text-left px-3 py-2 text-[11px] text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30';
             deleteBtn.textContent = 'Delete';
 
-            actionWrap.appendChild(renameBtn);
-            actionWrap.appendChild(deleteBtn);
+            menu.appendChild(renameBtn);
+            menu.appendChild(deleteBtn);
+            actionWrap.appendChild(actionBtn);
+            actionWrap.appendChild(menu);
             topRow.appendChild(actionWrap);
 
             item.appendChild(topRow);
@@ -267,6 +339,21 @@
         });
 
         elements.chatConversationList.appendChild(frag);
+        syncConversationMenuState();
+    }
+
+    function closeConversationMenus() {
+        state.activeConversationMenuId = null;
+        syncConversationMenuState();
+    }
+
+    function syncConversationMenuState() {
+        if (!elements.chatConversationList) return;
+        const menus = elements.chatConversationList.querySelectorAll('[data-conv-menu]');
+        menus.forEach((menu) => {
+            const menuId = menu.dataset.convMenu;
+            menu.classList.toggle('hidden', menuId !== state.activeConversationMenuId);
+        });
     }
 
     async function loadConversation(conversationId) {
@@ -355,6 +442,7 @@
         setStatus('Thinking...', 'neutral');
 
         const optimisticNode = appendMessage({ role: 'user', content, createdAt: Date.now() }, true);
+        const thinkingNode = appendMessage({ role: 'assistant', content: '', createdAt: Date.now() }, false, { placeholder: true });
         elements.chatInput.value = '';
 
         try {
@@ -368,8 +456,19 @@
                 optimisticNode.parentNode.removeChild(optimisticNode);
             }
 
+            if (thinkingNode && thinkingNode.parentNode) {
+                thinkingNode.parentNode.removeChild(thinkingNode);
+            }
+
             appendMessage(data.userMessage, false);
-            appendMessage(data.assistantMessage, false);
+            const streamedAssistantNode = appendMessage(
+                Object.assign({}, data.assistantMessage || {}, { content: '' }),
+                false
+            );
+            await streamAssistantText(
+                streamedAssistantNode,
+                normalizeMessageText(data.assistantMessage || { role: 'assistant', content: '' })
+            );
             state.pendingRetryContent = null;
             elements.chatRetryBtn?.classList.add('hidden');
             setStatus('', 'neutral');
@@ -381,6 +480,9 @@
         } catch (error) {
             if (optimisticNode && optimisticNode.parentNode) {
                 optimisticNode.classList.remove('opacity-70');
+            }
+            if (thinkingNode && thinkingNode.parentNode) {
+                thinkingNode.parentNode.removeChild(thinkingNode);
             }
 
             state.pendingRetryContent = content;
@@ -423,18 +525,24 @@
 
     function setAuthUi(user) {
         const authed = Boolean(user);
+        const email = authed ? (user.email || 'Signed in') : 'Not signed in';
 
-        if (elements.authOpenBtn) {
-            elements.authOpenBtn.classList.toggle('hidden', authed);
+        if (elements.accountMenuEmail) {
+            elements.accountMenuEmail.textContent = email;
         }
 
-        if (elements.authLogoutBtn) {
-            elements.authLogoutBtn.classList.toggle('hidden', !authed);
+        if (elements.accountSignInBtn) {
+            elements.accountSignInBtn.classList.toggle('hidden', authed);
         }
 
-        if (elements.authUserLabel) {
-            elements.authUserLabel.classList.toggle('hidden', !authed);
-            elements.authUserLabel.textContent = authed ? (user.email || 'Signed in') : '';
+        if (elements.accountSignOutBtn) {
+            elements.accountSignOutBtn.classList.toggle('hidden', !authed);
+        }
+
+        if (elements.accountMenuBtn) {
+            elements.accountMenuBtn.classList.toggle('text-primary-500', authed);
+            elements.accountMenuBtn.classList.toggle('border-primary-300', authed);
+            elements.accountMenuBtn.classList.toggle('dark:border-primary-700', authed);
         }
 
         if (!authed) {
@@ -448,17 +556,29 @@
 
     function openAuthModal(mode) {
         if (!elements.authModal) return;
+        toggleAccountMenu(false);
         elements.authMode.value = mode || 'signin';
         elements.authTitle.textContent = mode === 'signup' ? 'Create your account' : 'Sign in to continue';
         elements.authSubmitBtn.textContent = mode === 'signup' ? 'Create account' : 'Sign in';
         elements.authSwitchModeBtn.textContent = mode === 'signup' ? 'Already have an account? Sign in' : 'Need an account? Sign up';
         elements.authError.textContent = '';
         elements.authModal.classList.remove('hidden');
+        global.requestAnimationFrame(() => {
+            elements.authEmail?.focus();
+        });
     }
 
     function closeAuthModal() {
         if (!elements.authModal) return;
         elements.authModal.classList.add('hidden');
+    }
+
+    function toggleAccountMenu(forceOpen) {
+        if (!elements.accountMenuDropdown) return;
+        const shouldOpen = typeof forceOpen === 'boolean'
+            ? forceOpen
+            : elements.accountMenuDropdown.classList.contains('hidden');
+        elements.accountMenuDropdown.classList.toggle('hidden', !shouldOpen);
     }
 
     async function handleAuthSubmit(event) {
@@ -490,16 +610,31 @@
         elements.authError.textContent = '';
 
         try {
-            await global.firebaseClient.signInWithGoogle();
-            closeAuthModal();
+            const user = await global.firebaseClient.signInWithGoogle();
+            if (user) {
+                closeAuthModal();
+            } else {
+                setStatus('Redirecting to Google sign-in...', 'neutral');
+            }
         } catch (error) {
-            elements.authError.textContent = error.userMessage || 'Google sign-in failed.';
+            const code = error && error.code ? ` (${error.code})` : '';
+            elements.authError.textContent = (error.userMessage || 'Google sign-in failed.') + code;
         }
     }
 
     function bindUiEvents() {
-        elements.authOpenBtn?.addEventListener('click', () => openAuthModal('signin'));
-        elements.authLogoutBtn?.addEventListener('click', async () => {
+        elements.accountMenuBtn?.addEventListener('click', (event) => {
+            event.stopPropagation();
+            toggleAccountMenu();
+        });
+
+        elements.accountSignInBtn?.addEventListener('click', () => {
+            toggleAccountMenu(false);
+            openAuthModal('signin');
+        });
+
+        elements.accountSignOutBtn?.addEventListener('click', async () => {
+            toggleAccountMenu(false);
             await global.firebaseClient.signOut();
         });
 
@@ -528,20 +663,31 @@
         });
 
         elements.chatConversationList?.addEventListener('click', async (event) => {
+            const toggleMenuButton = event.target.closest('[data-conv-menu-toggle]');
+            if (toggleMenuButton) {
+                const menuId = toggleMenuButton.dataset.convMenuToggle;
+                state.activeConversationMenuId = state.activeConversationMenuId === menuId ? null : menuId;
+                syncConversationMenuState();
+                return;
+            }
+
             const openButton = event.target.closest('[data-conversation-id]');
             if (openButton) {
+                closeConversationMenus();
                 await loadConversation(openButton.dataset.conversationId);
                 return;
             }
 
             const renameButton = event.target.closest('[data-rename-conversation-id]');
             if (renameButton) {
+                closeConversationMenus();
                 await renameConversationById(renameButton.dataset.renameConversationId);
                 return;
             }
 
             const deleteButton = event.target.closest('[data-delete-conversation-id]');
             if (deleteButton) {
+                closeConversationMenus();
                 await deleteConversationById(deleteButton.dataset.deleteConversationId);
             }
         });
@@ -560,6 +706,94 @@
             elements.chatPanel.classList.add('translate-x-full');
             elements.chatPanelOverlay.classList.add('hidden');
         });
+
+        document.addEventListener('click', (event) => {
+            if (elements.accountMenu && !elements.accountMenu.contains(event.target)) {
+                toggleAccountMenu(false);
+            }
+
+            if (elements.chatConversationList && !elements.chatConversationList.contains(event.target)) {
+                closeConversationMenus();
+            }
+        });
+
+        document.addEventListener('keydown', (event) => {
+            if (event.key !== 'Escape') return;
+            toggleAccountMenu(false);
+            closeConversationMenus();
+            if (!elements.authModal.classList.contains('hidden')) {
+                closeAuthModal();
+            }
+        });
+    }
+
+    function applySavedChatPanelWidth() {
+        let raw = '';
+        try {
+            raw = localStorage.getItem(CHAT_PANEL_WIDTH_STORAGE_KEY) || '';
+        } catch (_) {
+            raw = '';
+        }
+        const saved = Number.parseInt(raw, 10);
+        if (!Number.isFinite(saved)) return;
+        const maxWidth = Math.min(CHAT_PANEL_MAX_WIDTH, Math.floor(global.innerWidth * 0.62));
+        const width = Math.min(maxWidth, Math.max(CHAT_PANEL_MIN_WIDTH, saved));
+        document.documentElement.style.setProperty('--chat-panel-width', `${width}px`);
+    }
+
+    function initChatResize() {
+        if (!elements.chatResizeHandle) return;
+
+        applySavedChatPanelWidth();
+
+        let pointerId = null;
+        let pendingWidth = null;
+        let rafId = null;
+
+        const flushWidth = () => {
+            rafId = null;
+            if (!Number.isFinite(pendingWidth)) return;
+            document.documentElement.style.setProperty('--chat-panel-width', `${pendingWidth}px`);
+        };
+
+        const onPointerMove = (event) => {
+            if (!state.isResizingChat || event.pointerId !== pointerId) return;
+            const rawWidth = global.innerWidth - event.clientX;
+            const maxWidth = Math.min(CHAT_PANEL_MAX_WIDTH, Math.floor(global.innerWidth * 0.62));
+            const width = Math.min(maxWidth, Math.max(CHAT_PANEL_MIN_WIDTH, rawWidth));
+            pendingWidth = width;
+            if (!rafId) {
+                rafId = global.requestAnimationFrame(flushWidth);
+            }
+        };
+
+        const onPointerUp = (event) => {
+            if (!state.isResizingChat || event.pointerId !== pointerId) return;
+            state.isResizingChat = false;
+            pointerId = null;
+            document.body.classList.remove('chat-resizing');
+            if (Number.isFinite(pendingWidth)) {
+                try {
+                    localStorage.setItem(CHAT_PANEL_WIDTH_STORAGE_KEY, String(Math.round(pendingWidth)));
+                } catch (_) {
+                    // ignore storage failures
+                }
+            }
+        };
+
+        elements.chatResizeHandle.addEventListener('pointerdown', (event) => {
+            if (global.innerWidth < 768) return;
+            state.isResizingChat = true;
+            pointerId = event.pointerId;
+            elements.chatResizeHandle.setPointerCapture(pointerId);
+            document.body.classList.add('chat-resizing');
+            event.preventDefault();
+        });
+
+        global.addEventListener('pointermove', onPointerMove);
+        global.addEventListener('pointerup', onPointerUp);
+        global.addEventListener('pointercancel', onPointerUp);
+        global.addEventListener('resize', applySavedChatPanelWidth);
     }
 
     async function refreshAuthAndConversations(user) {
@@ -572,10 +806,25 @@
             renderConversations();
             renderMessages([]);
             setComposerDisabled(true);
+            let prompted = false;
+            try {
+                prompted = sessionStorage.getItem(AUTH_PROMPT_STORAGE_KEY) === '1';
+            } catch (_) {
+                prompted = false;
+            }
+            if (!prompted) {
+                try {
+                    sessionStorage.setItem(AUTH_PROMPT_STORAGE_KEY, '1');
+                } catch (_) {
+                    // ignore storage failures
+                }
+                openAuthModal('signup');
+            }
             return;
         }
 
         try {
+            closeAuthModal();
             await refreshConversations();
             if (state.currentPdf) {
                 await openConversationForPdf(state.currentPdf.id, state.currentPdf.name);
@@ -587,9 +836,12 @@
 
     async function init() {
         Object.assign(elements, {
-            authOpenBtn: document.getElementById('authOpenBtn'),
-            authLogoutBtn: document.getElementById('authLogoutBtn'),
-            authUserLabel: document.getElementById('authUserLabel'),
+            accountMenu: document.getElementById('accountMenu'),
+            accountMenuBtn: document.getElementById('accountMenuBtn'),
+            accountMenuDropdown: document.getElementById('accountMenuDropdown'),
+            accountMenuEmail: document.getElementById('accountMenuEmail'),
+            accountSignInBtn: document.getElementById('accountSignInBtn'),
+            accountSignOutBtn: document.getElementById('accountSignOutBtn'),
             authModal: document.getElementById('authModal'),
             authBackdrop: document.getElementById('authBackdrop'),
             authCloseBtn: document.getElementById('authCloseBtn'),
@@ -604,6 +856,7 @@
             authError: document.getElementById('authError'),
             chatPanel: document.getElementById('chatPanel'),
             chatPanelOverlay: document.getElementById('chatPanelOverlay'),
+            chatResizeHandle: document.getElementById('chatResizeHandle'),
             chatMobileToggleBtn: document.getElementById('chatMobileToggleBtn'),
             chatPanelCloseBtn: document.getElementById('chatPanelCloseBtn'),
             chatCurrentPdfLabel: document.getElementById('chatCurrentPdfLabel'),
@@ -617,6 +870,7 @@
         });
 
         bindUiEvents();
+        initChatResize();
         await global.firebaseClient.init();
 
         await global.firebaseClient.onAuthStateChanged((user) => {
@@ -627,7 +881,7 @@
     async function ensureAuthenticated() {
         const user = await global.firebaseClient.getCurrentUser();
         if (user) return true;
-        openAuthModal('signin');
+        openAuthModal('signup');
         setStatus('Sign in to use chat', 'error');
         return false;
     }
@@ -641,8 +895,13 @@
             return;
         }
 
-        elements.chatPanel.classList.remove('translate-x-full');
-        elements.chatPanelOverlay.classList.add('hidden');
+        if (global.innerWidth >= 768) {
+            elements.chatPanel.classList.remove('translate-x-full');
+            elements.chatPanelOverlay.classList.add('hidden');
+        } else {
+            elements.chatPanel.classList.add('translate-x-full');
+            elements.chatPanelOverlay.classList.add('hidden');
+        }
 
         try {
             await openConversationForPdf(file.id, file.name);
@@ -655,7 +914,12 @@
         await closeActiveConversation();
         state.currentPdf = null;
         state.currentConversationId = null;
+        state.activeConversationMenuId = null;
         setComposerDisabled(true);
+        if (elements.chatCurrentPdfLabel) {
+            elements.chatCurrentPdfLabel.textContent = 'No active PDF';
+        }
+        renderConversations();
         elements.chatPanel.classList.add('translate-x-full');
         elements.chatPanelOverlay.classList.add('hidden');
     }

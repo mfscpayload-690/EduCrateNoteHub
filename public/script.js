@@ -17,8 +17,18 @@ window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
         isMobile = window.innerWidth < 768;
+        updateViewportUnit();
     }, 150);
 }, { passive: true });
+
+window.addEventListener('orientationchange', () => {
+    setTimeout(updateViewportUnit, 120);
+}, { passive: true });
+
+function updateViewportUnit() {
+    const vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty('--app-vh', `${vh}px`);
+}
 
 // Helper function to escape HTML and prevent XSS
 function escapeHtml(text) {
@@ -69,6 +79,7 @@ const elements = {
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
+    updateViewportUnit();
     initTheme();
     loadFolders();
     setupEventListeners();
