@@ -1,7 +1,9 @@
-# Environment variables
+# Environment variables (never commit secrets)
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.sample
+!.env.template
 
 # Dependencies
 node_modules/
@@ -41,3 +43,9 @@ temp/
 .eslintcache
 env
 SELF_CONTEXT.md
+
+# Firebase / credentials
+.firebase/
+*firebase-adminsdk*.json
+serviceAccountKey*.json
+google-credentials*.json
