@@ -17,8 +17,18 @@ window.addEventListener('resize', () => {
     clearTimeout(resizeTimeout);
     resizeTimeout = setTimeout(() => {
         isMobile = window.innerWidth < 768;
+        updateViewportUnit();
     }, 150);
 }, { passive: true });
+
+window.addEventListener('orientationchange', () => {
+    setTimeout(updateViewportUnit, 120);
+}, { passive: true });
+
+function updateViewportUnit() {
+    const vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty('--app-vh', `${vh}px`);
+}
 
 // Helper function to escape HTML and prevent XSS
 function escapeHtml(text) {
@@ -69,9 +79,15 @@ const elements = {
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
+    updateViewportUnit();
     initTheme();
     loadFolders();
     setupEventListeners();
+    if (window.chatApp && typeof window.chatApp.init === 'function') {
+        window.chatApp.init().catch((error) => {
+            console.error('Chat initialization failed:', error);
+        });
+    }
 });
 
 function setupEventListeners() {
@@ -535,12 +551,24 @@ function openPdf(file) {
     // Use Google Drive's embedded preview viewer so the PDF opens within the page
     const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
     elements.pdfIframe.src = previewUrl;
+
+    if (window.chatApp && typeof window.chatApp.onPdfOpened === 'function') {
+        window.chatApp.onPdfOpened(file).catch((error) => {
+            console.error('Chat PDF bind failed:', error);
+        });
+    }
     
     // Push history state so back button/swipe closes the modal instead of leaving the site
     history.pushState({ pdfOpen: true }, '');
 }
 
 function closePdf(fromPopState) {
+    if (window.chatApp && typeof window.chatApp.onPdfClosed === 'function') {
+        window.chatApp.onPdfClosed().catch((error) => {
+            console.error('Chat close failed:', error);
+        });
+    }
+
     document.body.classList.remove('modal-open');
     elements.pdfModal.classList.add('hidden');
     elements.pdfLoading.classList.add('hidden');

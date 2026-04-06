@@ -1,7 +1,10 @@
 [build]
-  command = "npm install"
+  command = "npm ci --omit=dev"
   publish = "public"
   functions = "netlify/functions"
+
+[functions]
+  node_bundler = "esbuild"
 
 # Map the /api calls to our function
 [[redirects]]
