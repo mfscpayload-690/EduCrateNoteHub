@@ -11,8 +11,11 @@
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
+    "firebase": "^12.11.0",
+    "firebase-admin": "^13.7.0",
     "googleapis": "^126.0.1",
     "helmet": "^7.2.0",
+    "pdf-parse": "^2.4.5",
     "serverless-http": "^4.0.0"
   }
 }
