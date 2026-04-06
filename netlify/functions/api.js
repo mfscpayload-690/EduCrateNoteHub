@@ -1,5 +1,6 @@
 const express = require('express');
-const { google } = require('googleapis');
+const { GoogleAuth } = require('google-auth-library');
+const { drive } = require('@googleapis/drive');
 const cors = require('cors');
 const serverless = require('serverless-http');
 const helmet = require('helmet');
@@ -351,11 +352,11 @@ const initDriveClient = () => {
 
     try {
         const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON.trim());
-        cachedAuth = new google.auth.GoogleAuth({
+        cachedAuth = new GoogleAuth({
             credentials,
             scopes: ['https://www.googleapis.com/auth/drive.readonly']
         });
-        cachedDriveClient = google.drive({ version: 'v3', auth: cachedAuth });
+        cachedDriveClient = drive({ version: 'v3', auth: cachedAuth });
         return cachedDriveClient;
     } catch (error) {
         console.error('Drive initialization failed:', error.message);
