@@ -393,6 +393,7 @@ const configuredRootFolderId = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').t
 const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
 const PDF_OR_SHORTCUT_QUERY =
     "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
+const NETLIFY_FUNCTION_MAX_RESPONSE_BYTES = 6000000;
 
 let cachedDriveClient = null;
 let cachedAuth = null;
@@ -480,7 +481,7 @@ function mapDriveFileToApiFile(file) {
         id: resolvedId,
         name: file.name,
         size: formatFileSize(file.size),
-        viewUrl: `/api/pdf/${resolvedId}`,
+        viewUrl: `/api/view/${resolvedId}`,
         downloadUrl: `/api/download/${resolvedId}`,
         thumbnailUrl: `/api/thumbnail/${resolvedId}`
     };
@@ -1042,6 +1043,13 @@ app.get('/api/pdf/:fileId', async (req, res) => {
         const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size', supportsAllDrives: true });
         if (meta.data.mimeType !== 'application/pdf') {
             res.status(400).json({ success: false, error: 'File is not a PDF' });
+            return;
+        }
+
+        const fileSizeBytes = Number.parseInt(meta.data.size, 10);
+        // Netlify Functions have a hard response payload cap; large PDFs must be rendered via Drive preview.
+        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > NETLIFY_FUNCTION_MAX_RESPONSE_BYTES) {
+            res.redirect(302, `https://drive.google.com/file/d/${fileId}/preview`);
             return;
         }
 

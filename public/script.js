@@ -548,8 +548,8 @@ function openPdf(file) {
     elements.pdfIframe.classList.add('hidden');
     elements.pdfIframe.src = '';
 
-    // Load PDF via backend proxy for consistent preview across environments.
-    const previewUrl = `${API_BASE}/pdf/${encodeURIComponent(file.id)}`;
+    // Load PDF in Google Drive viewer inside the iframe (no large PDF payload through Netlify).
+    const previewUrl = file.viewUrl || `${API_BASE}/view/${encodeURIComponent(file.id)}`;
     elements.pdfIframe.src = previewUrl;
 
     if (window.chatApp && typeof window.chatApp.onPdfOpened === 'function') {
