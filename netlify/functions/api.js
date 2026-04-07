@@ -91,7 +91,6 @@ const {
     softDeleteConversation
 } = require('./lib/chatStore');
 const { createChatCompletion, DEFAULT_MODEL } = require('./lib/openrouter');
-const { getPdfContext, prewarmPdfContext } = require('./lib/pdfContext');
 
 const app = express();
 
@@ -389,9 +388,35 @@ const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 
 let cachedDriveClient = null;
 let cachedAuth = null;
+let cachedPdfContextHelpers;
 
 function getDriveCredentials() {
     return getServiceAccountCredentials();
+}
+
+function getPdfContextHelpers() {
+    if (cachedPdfContextHelpers !== undefined) {
+        return cachedPdfContextHelpers;
+    }
+
+    try {
+        const module = require('./lib/pdfContext');
+        const hasGet = module && typeof module.getPdfContext === 'function';
+        const hasPrewarm = module && typeof module.prewarmPdfContext === 'function';
+
+        if (!hasGet || !hasPrewarm) {
+            console.warn('PDF context module loaded but exports are incomplete');
+            cachedPdfContextHelpers = null;
+            return null;
+        }
+
+        cachedPdfContextHelpers = module;
+        return cachedPdfContextHelpers;
+    } catch (error) {
+        console.warn('PDF context module unavailable:', error.message);
+        cachedPdfContextHelpers = null;
+        return null;
+    }
 }
 
 const initDriveClient = () => {
@@ -484,8 +509,9 @@ app.post('/api/chat/by-pdf/open', requireAuth, applyChatRateLimits, async (req, 
         });
 
         const drive = initDriveClient();
-        if (drive) {
-            prewarmPdfContext({ drive, fileId: pdfFileId });
+        const pdfContextHelpers = getPdfContextHelpers();
+        if (drive && pdfContextHelpers) {
+            pdfContextHelpers.prewarmPdfContext({ drive, fileId: pdfFileId });
         }
 
         res.json({ success: true, data: conversation });
@@ -656,10 +682,11 @@ app.post('/api/chat/conversations/:conversationId/message', requireAuth, applyCh
 
         const drive = initDriveClient();
         let pdfContextText = '';
+        const pdfContextHelpers = getPdfContextHelpers();
 
-        if (drive && conversation.pdfFileId) {
+        if (drive && conversation.pdfFileId && pdfContextHelpers) {
             try {
-                const pdfContext = await getPdfContext({
+                const pdfContext = await pdfContextHelpers.getPdfContext({
                     drive,
                     fileId: conversation.pdfFileId,
                     maxChars: 12000
@@ -881,7 +908,7 @@ app.get('/api/files/:folderId', async (req, res) => {
                 size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
                 viewUrl: `/api/pdf/${file.id}`,
                 downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `https://drive.google.com/thumbnail?id=${file.id}&sz=w400`
+                thumbnailUrl: `/api/thumbnail/${file.id}`
             }))
             .sort(naturalSort);
 
@@ -937,7 +964,7 @@ app.get('/api/search', async (req, res) => {
                 size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
                 viewUrl: `/api/pdf/${file.id}`,
                 downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `https://drive.google.com/thumbnail?id=${file.id}&sz=w400`
+                thumbnailUrl: `/api/thumbnail/${file.id}`
             }))
             .sort(naturalSort);
 
