@@ -14,32 +14,72 @@ function requireEnv(name) {
     return String(value).trim();
 }
 
+function normalizePrivateKey(value) {
+    if (!value || typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    const unwrapped =
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))
+            ? trimmed.slice(1, -1)
+            : trimmed;
+    return unwrapped.replace(/\\n/g, '\n');
+}
+
+function parseServiceAccountJson(rawValue) {
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!raw) {
+        return null;
+    }
+
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (error) {
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
+    }
+
+    const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : '';
+    const privateKey = normalizePrivateKey(parsed.private_key);
+    const projectId =
+        (typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '') ||
+        (typeof process.env.FIREBASE_PROJECT_ID === 'string' ? process.env.FIREBASE_PROJECT_ID.trim() : '');
+
+    if (!clientEmail || !privateKey || !projectId) {
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
+    }
+
+    return {
+        project_id: projectId,
+        client_email: clientEmail,
+        private_key: privateKey
+    };
+}
+
+function getServiceAccountCredentials() {
+    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    if (fromJson) {
+        return fromJson;
+    }
+
+    return {
+        project_id: requireEnv('FIREBASE_PROJECT_ID'),
+        client_email: requireEnv('FIREBASE_CLIENT_EMAIL'),
+        private_key: normalizePrivateKey(requireEnv('FIREBASE_PRIVATE_KEY'))
+    };
+}
+
 function validateEnvironment() {
     requireEnv('OPENROUTER_API_KEY');
     requireEnv('OPENROUTER_BASE_URL');
     requireEnv('OPENROUTER_DEFAULT_MODEL');
 
     requireEnv('FIREBASE_PROJECT_ID');
-    requireEnv('FIREBASE_CLIENT_EMAIL');
-    requireEnv('FIREBASE_PRIVATE_KEY');
 
     requireEnv('FIREBASE_API_KEY');
     requireEnv('FIREBASE_AUTH_DOMAIN');
     requireEnv('FIREBASE_APP_ID');
 
-    const rawServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-    if (rawServiceAccount && String(rawServiceAccount).trim()) {
-        let parsed;
-        try {
-            parsed = JSON.parse(String(rawServiceAccount).trim());
-        } catch (error) {
-            throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
-        }
-
-        if (!parsed.client_email || !parsed.private_key || !parsed.project_id) {
-            throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
-        }
-    }
+    getServiceAccountCredentials();
 }
 
 validateEnvironment();
@@ -349,28 +389,8 @@ const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 let cachedDriveClient = null;
 let cachedAuth = null;
 
-function normalizePrivateKey(value) {
-    if (!value || typeof value !== 'string') return '';
-    return value.replace(/\\n/g, '\n');
-}
-
 function getDriveCredentials() {
-    const rawServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-    if (rawServiceAccount && String(rawServiceAccount).trim()) {
-        const parsed = JSON.parse(String(rawServiceAccount).trim());
-        return {
-            project_id: parsed.project_id || process.env.FIREBASE_PROJECT_ID,
-            client_email: parsed.client_email,
-            private_key: normalizePrivateKey(parsed.private_key)
-        };
-    }
-
-    // Fallback path to keep Netlify Lambda env size small (avoid duplicating full JSON).
-    return {
-        project_id: process.env.FIREBASE_PROJECT_ID,
-        client_email: process.env.FIREBASE_CLIENT_EMAIL,
-        private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY)
-    };
+    return getServiceAccountCredentials();
 }
 
 const initDriveClient = () => {
