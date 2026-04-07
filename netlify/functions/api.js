@@ -69,22 +69,14 @@ function getServiceAccountCredentials() {
 }
 
 function validateEnvironment() {
-    requireEnv('OPENROUTER_API_KEY');
-    requireEnv('OPENROUTER_BASE_URL');
-    requireEnv('OPENROUTER_DEFAULT_MODEL');
-
-    requireEnv('FIREBASE_PROJECT_ID');
-
-    requireEnv('FIREBASE_API_KEY');
-    requireEnv('FIREBASE_AUTH_DOMAIN');
-    requireEnv('FIREBASE_APP_ID');
-
-    getServiceAccountCredentials();
+    // Keep startup tolerant: route handlers validate their own required config.
+    // This prevents all /api routes from failing with 502 if one optional
+    // environment variable is missing.
 }
 
 validateEnvironment();
 
-const { adminAuth } = require('./lib/firebaseAdmin');
+const { getAdminAuth } = require('./lib/firebaseAdmin');
 const {
     createPreview,
     getConversation,
@@ -219,6 +211,15 @@ const chatUidRateLimiter = createRateLimiter({
 app.use(generalRateLimiter);
 
 function requireAuth(req, res, next) {
+    let adminAuth;
+    try {
+        adminAuth = getAdminAuth();
+    } catch (error) {
+        console.error('Auth initialization failed:', error.message);
+        res.status(503).json({ success: false, error: 'Authentication service is not configured' });
+        return;
+    }
+
     const authHeader = req.headers.authorization || '';
     if (!authHeader.startsWith('Bearer ')) {
         res.status(401).json({ success: false, error: 'Missing or invalid Authorization header' });
@@ -422,14 +423,27 @@ function naturalSort(a, b) {
 }
 
 app.get('/api/config/firebase', (req, res) => {
+    const apiKey = process.env.FIREBASE_API_KEY;
+    const authDomain = process.env.FIREBASE_AUTH_DOMAIN;
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const appId = process.env.FIREBASE_APP_ID;
+
+    if (!apiKey || !authDomain || !projectId || !appId) {
+        res.status(500).json({
+            success: false,
+            error: 'Firebase client configuration is incomplete on the server'
+        });
+        return;
+    }
+
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json({
         success: true,
         data: {
-            apiKey: process.env.FIREBASE_API_KEY,
-            authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            appId: process.env.FIREBASE_APP_ID,
+            apiKey,
+            authDomain,
+            projectId,
+            appId,
             messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
             storageBucket: process.env.FIREBASE_STORAGE_BUCKET || ''
         }

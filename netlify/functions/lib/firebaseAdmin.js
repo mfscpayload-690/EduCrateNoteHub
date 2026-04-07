@@ -1,6 +1,8 @@
 const admin = require('firebase-admin');
 
 let firebaseApp = null;
+let adminAuth = null;
+let adminDb = null;
 
 function normalizePrivateKey(value) {
     if (!value || typeof value !== 'string') {
@@ -87,12 +89,26 @@ function getFirebaseApp() {
     return firebaseApp;
 }
 
-const app = getFirebaseApp();
-const adminAuth = admin.auth(app);
-const adminDb = admin.firestore(app);
+function getAdminAuth() {
+    if (adminAuth) {
+        return adminAuth;
+    }
+    const app = getFirebaseApp();
+    adminAuth = admin.auth(app);
+    return adminAuth;
+}
+
+function getAdminDb() {
+    if (adminDb) {
+        return adminDb;
+    }
+    const app = getFirebaseApp();
+    adminDb = admin.firestore(app);
+    return adminDb;
+}
 
 module.exports = {
     admin,
-    adminAuth,
-    adminDb
+    getAdminAuth,
+    getAdminDb
 };
