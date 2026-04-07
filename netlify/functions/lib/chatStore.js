@@ -1,4 +1,4 @@
-const { adminDb, admin } = require('./firebaseAdmin');
+const { getAdminDb, admin } = require('./firebaseAdmin');
 
 const USERS_COLLECTION = 'users';
 const CONVERSATIONS_COLLECTION = 'conversations';
@@ -41,7 +41,7 @@ function createPreview(text, maxLength = 180) {
 
 function userRef(uid) {
     assertUid(uid);
-    return adminDb.collection(USERS_COLLECTION).doc(uid);
+    return getAdminDb().collection(USERS_COLLECTION).doc(uid);
 }
 
 function conversationsRef(uid) {

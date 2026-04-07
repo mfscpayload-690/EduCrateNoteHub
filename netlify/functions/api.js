@@ -14,35 +14,69 @@ function requireEnv(name) {
     return String(value).trim();
 }
 
-function validateEnvironment() {
-    requireEnv('GOOGLE_SERVICE_ACCOUNT_JSON');
-    requireEnv('OPENROUTER_API_KEY');
-    requireEnv('OPENROUTER_BASE_URL');
-    requireEnv('OPENROUTER_DEFAULT_MODEL');
+function normalizePrivateKey(value) {
+    if (!value || typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    const unwrapped =
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))
+            ? trimmed.slice(1, -1)
+            : trimmed;
+    return unwrapped.replace(/\\n/g, '\n');
+}
 
-    requireEnv('FIREBASE_PROJECT_ID');
-    requireEnv('FIREBASE_CLIENT_EMAIL');
-    requireEnv('FIREBASE_PRIVATE_KEY');
-
-    requireEnv('FIREBASE_API_KEY');
-    requireEnv('FIREBASE_AUTH_DOMAIN');
-    requireEnv('FIREBASE_APP_ID');
+function parseServiceAccountJson(rawValue) {
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!raw) {
+        return null;
+    }
 
     let parsed;
     try {
-        parsed = JSON.parse(requireEnv('GOOGLE_SERVICE_ACCOUNT_JSON'));
+        parsed = JSON.parse(raw);
     } catch (error) {
         throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
     }
 
-    if (!parsed.client_email || !parsed.private_key || !parsed.project_id) {
+    const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : '';
+    const privateKey = normalizePrivateKey(parsed.private_key);
+    const projectId =
+        (typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '') ||
+        (typeof process.env.FIREBASE_PROJECT_ID === 'string' ? process.env.FIREBASE_PROJECT_ID.trim() : '');
+
+    if (!clientEmail || !privateKey || !projectId) {
         throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
     }
+
+    return {
+        project_id: projectId,
+        client_email: clientEmail,
+        private_key: privateKey
+    };
+}
+
+function getServiceAccountCredentials() {
+    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    if (fromJson) {
+        return fromJson;
+    }
+
+    return {
+        project_id: requireEnv('FIREBASE_PROJECT_ID'),
+        client_email: requireEnv('FIREBASE_CLIENT_EMAIL'),
+        private_key: normalizePrivateKey(requireEnv('FIREBASE_PRIVATE_KEY'))
+    };
+}
+
+function validateEnvironment() {
+    // Keep startup tolerant: route handlers validate their own required config.
+    // This prevents all /api routes from failing with 502 if one optional
+    // environment variable is missing.
 }
 
 validateEnvironment();
 
-const { adminAuth } = require('./lib/firebaseAdmin');
+const { getAdminAuth } = require('./lib/firebaseAdmin');
 const {
     createPreview,
     getConversation,
@@ -177,6 +211,15 @@ const chatUidRateLimiter = createRateLimiter({
 app.use(generalRateLimiter);
 
 function requireAuth(req, res, next) {
+    let adminAuth;
+    try {
+        adminAuth = getAdminAuth();
+    } catch (error) {
+        console.error('Auth initialization failed:', error.message);
+        res.status(503).json({ success: false, error: 'Authentication service is not configured' });
+        return;
+    }
+
     const authHeader = req.headers.authorization || '';
     if (!authHeader.startsWith('Bearer ')) {
         res.status(401).json({ success: false, error: 'Missing or invalid Authorization header' });
@@ -347,11 +390,15 @@ const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 let cachedDriveClient = null;
 let cachedAuth = null;
 
+function getDriveCredentials() {
+    return getServiceAccountCredentials();
+}
+
 const initDriveClient = () => {
     if (cachedDriveClient) return cachedDriveClient;
 
     try {
-        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON.trim());
+        const credentials = getDriveCredentials();
         cachedAuth = new GoogleAuth({
             credentials,
             scopes: ['https://www.googleapis.com/auth/drive.readonly']
@@ -376,14 +423,27 @@ function naturalSort(a, b) {
 }
 
 app.get('/api/config/firebase', (req, res) => {
+    const apiKey = process.env.FIREBASE_API_KEY;
+    const authDomain = process.env.FIREBASE_AUTH_DOMAIN;
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const appId = process.env.FIREBASE_APP_ID;
+
+    if (!apiKey || !authDomain || !projectId || !appId) {
+        res.status(500).json({
+            success: false,
+            error: 'Firebase client configuration is incomplete on the server'
+        });
+        return;
+    }
+
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json({
         success: true,
         data: {
-            apiKey: process.env.FIREBASE_API_KEY,
-            authDomain: process.env.FIREBASE_AUTH_DOMAIN,
-            projectId: process.env.FIREBASE_PROJECT_ID,
-            appId: process.env.FIREBASE_APP_ID,
+            apiKey,
+            authDomain,
+            projectId,
+            appId,
             messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
             storageBucket: process.env.FIREBASE_STORAGE_BUCKET || ''
         }
