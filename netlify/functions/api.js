@@ -384,7 +384,11 @@ function buildModelMessages(systemPrompt, recentMessages) {
     );
 }
 
-const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const DEFAULT_ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const configuredRootFolderId = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').trim();
+const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
+const PDF_OR_SHORTCUT_QUERY =
+    "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
 
 let cachedDriveClient = null;
 let cachedAuth = null;
@@ -445,6 +449,37 @@ const getAccessToken = async () => {
 
 function naturalSort(a, b) {
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function formatFileSize(sizeValue) {
+    const parsedSize = Number.parseInt(sizeValue, 10);
+    if (!Number.isFinite(parsedSize) || parsedSize <= 0) {
+        return 'Unknown size';
+    }
+    return (parsedSize / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function resolvePdfFileId(file) {
+    if (file?.mimeType === 'application/vnd.google-apps.shortcut') {
+        return file?.shortcutDetails?.targetId || '';
+    }
+    return file?.id || '';
+}
+
+function mapDriveFileToApiFile(file) {
+    const resolvedId = resolvePdfFileId(file);
+    if (!isValidDriveId(resolvedId)) {
+        return null;
+    }
+
+    return {
+        id: resolvedId,
+        name: file.name,
+        size: formatFileSize(file.size),
+        viewUrl: `/api/pdf/${resolvedId}`,
+        downloadUrl: `/api/download/${resolvedId}`,
+        thumbnailUrl: `/api/thumbnail/${resolvedId}`
+    };
 }
 
 app.get('/api/config/firebase', (req, res) => {
@@ -860,6 +895,11 @@ app.delete('/api/chat/conversations/:conversationId', requireAuth, applyChatRate
 
 app.get('/api/folders', async (req, res) => {
     try {
+        if (!isValidDriveId(ROOT_FOLDER_ID)) {
+            res.status(500).json({ success: false, error: 'Invalid Google Drive root folder configuration' });
+            return;
+        }
+
         const drive = initDriveClient();
         if (!drive) {
             res.status(500).json({ success: false, error: 'Drive client initialization failed' });
@@ -869,7 +909,9 @@ app.get('/api/folders', async (req, res) => {
         const response = await drive.files.list({
             q: `'${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
             fields: 'files(id, name)',
-            orderBy: 'name'
+            orderBy: 'name',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const sortedFolders = response.data.files.sort(naturalSort);
@@ -896,20 +938,16 @@ app.get('/api/files/:folderId', async (req, res) => {
         }
 
         const response = await drive.files.list({
-            q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            orderBy: 'name'
+            q: `'${folderId}' in parents and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            orderBy: 'name',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const files = response.data.files
-            .map((file) => ({
-                id: file.id,
-                name: file.name,
-                size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
-                viewUrl: `/api/pdf/${file.id}`,
-                downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `/api/thumbnail/${file.id}`
-            }))
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
             .sort(naturalSort);
 
         res.setHeader('Cache-Control', 'public, max-age=30');
@@ -952,20 +990,17 @@ app.get('/api/search', async (req, res) => {
         }
 
         const response = await drive.files.list({
-            q: `name contains '${sanitizedQuery}' and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            pageSize: 10
+            q: `name contains '${sanitizedQuery}' and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            pageSize: 10,
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const files = response.data.files
-            .map((file) => ({
-                id: file.id,
-                name: file.name,
-                size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
-                viewUrl: `/api/pdf/${file.id}`,
-                downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `/api/thumbnail/${file.id}`
-            }))
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
             .sort(naturalSort);
 
         res.setHeader('Cache-Control', 'public, max-age=900');
@@ -1000,13 +1035,13 @@ app.get('/api/pdf/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
+        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size', supportsAllDrives: true });
         if (meta.data.mimeType !== 'application/pdf') {
             res.status(400).json({ success: false, error: 'File is not a PDF' });
             return;
         }
 
-        const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+        const response = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.data.name)}"`);
@@ -1044,7 +1079,7 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'thumbnailLink,hasThumbnail' });
+        const meta = await drive.files.get({ fileId, fields: 'thumbnailLink,hasThumbnail', supportsAllDrives: true });
         if (!meta.data.hasThumbnail || !meta.data.thumbnailLink) {
             res.status(404).json({ success: false, error: 'No thumbnail available' });
             return;
@@ -1090,13 +1125,13 @@ app.get('/api/download/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
+        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size', supportsAllDrives: true });
         if (meta.data.mimeType !== 'application/pdf') {
             res.status(400).json({ success: false, error: 'File is not a PDF' });
             return;
         }
 
-        const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+        const response = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
