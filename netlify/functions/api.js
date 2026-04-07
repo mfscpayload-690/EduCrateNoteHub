@@ -101,15 +101,72 @@ const DEFAULT_ALLOWED_ORIGINS = [
     'http://127.0.0.1:8888'
 ];
 
+function parseUrlSafe(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return null;
+    }
+    try {
+        return new URL(value.trim());
+    } catch (_) {
+        return null;
+    }
+}
+
+function normalizeOrigin(value) {
+    const parsed = parseUrlSafe(value);
+    return parsed ? parsed.origin : '';
+}
+
+function toNetlifyBaseHost(hostname) {
+    if (typeof hostname !== 'string' || !hostname.endsWith('.netlify.app')) {
+        return '';
+    }
+
+    const marker = '--';
+    const markerIndex = hostname.lastIndexOf(marker);
+    if (markerIndex === -1) {
+        return hostname;
+    }
+
+    const candidate = hostname.slice(markerIndex + marker.length);
+    return candidate.endsWith('.netlify.app') ? candidate : hostname;
+}
+
 const configuredOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS;
 
-const runtimeOrigins = [process.env.URL, process.env.DEPLOY_PRIME_URL]
-    .map((origin) => (typeof origin === 'string' ? origin.trim() : ''))
+const runtimeOriginCandidates = [process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL];
+const runtimeOrigins = runtimeOriginCandidates
+    .map(normalizeOrigin)
     .filter(Boolean);
 
-const allowedOrigins = new Set([...configuredOrigins, ...runtimeOrigins]);
+const allowedOrigins = new Set([...configuredOrigins, ...runtimeOrigins].map(normalizeOrigin).filter(Boolean));
+const siteName = typeof process.env.SITE_NAME === 'string' ? process.env.SITE_NAME.trim() : '';
+const netlifyBaseHosts = new Set(
+    [
+        ...runtimeOriginCandidates.map((origin) => {
+            const parsed = parseUrlSafe(origin);
+            return parsed ? toNetlifyBaseHost(parsed.hostname) : '';
+        }),
+        siteName ? `${siteName}.netlify.app` : ''
+    ].filter(Boolean)
+);
+
+function isAllowedNetlifySiteOrigin(origin) {
+    const parsed = parseUrlSafe(origin);
+    if (!parsed || parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.netlify.app')) {
+        return false;
+    }
+
+    for (const baseHost of netlifyBaseHosts) {
+        if (parsed.hostname === baseHost || parsed.hostname.endsWith(`--${baseHost}`)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 app.use(cors({
     origin(origin, callback) {
@@ -118,7 +175,8 @@ app.use(cors({
             return;
         }
 
-        if (allowedOrigins.has(origin)) {
+        const normalizedOrigin = normalizeOrigin(origin);
+        if (allowedOrigins.has(normalizedOrigin) || isAllowedNetlifySiteOrigin(normalizedOrigin)) {
             callback(null, true);
             return;
         }
@@ -291,6 +349,39 @@ function isValidDriveId(value) {
     return typeof value === 'string' && DRIVE_ID_PATTERN.test(value);
 }
 
+function extractDriveId(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    if (isValidDriveId(trimmed)) {
+        return trimmed;
+    }
+
+    const folderPathMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]{8,200})/);
+    if (folderPathMatch && isValidDriveId(folderPathMatch[1])) {
+        return folderPathMatch[1];
+    }
+
+    const filePathMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]{8,200})/);
+    if (filePathMatch && isValidDriveId(filePathMatch[1])) {
+        return filePathMatch[1];
+    }
+
+    const parsed = parseUrlSafe(trimmed);
+    const idFromQuery = parsed ? parsed.searchParams.get('id') : '';
+    if (isValidDriveId(idFromQuery)) {
+        return idFromQuery;
+    }
+
+    return '';
+}
+
 function isValidDocId(value) {
     return typeof value === 'string' && DOC_ID_PATTERN.test(value);
 }
@@ -389,7 +480,11 @@ function buildModelMessages(systemPrompt, recentMessages) {
 }
 
 const DEFAULT_ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
-const configuredRootFolderId = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').trim();
+const configuredRootFolderRaw = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').trim();
+const configuredRootFolderId = extractDriveId(configuredRootFolderRaw);
+if (configuredRootFolderRaw && !configuredRootFolderId) {
+    console.warn('Invalid GOOGLE_DRIVE_ROOT_FOLDER_ID format. Falling back to default root folder ID.');
+}
 const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
 const PDF_OR_SHORTCUT_QUERY =
     "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
@@ -900,11 +995,6 @@ app.delete('/api/chat/conversations/:conversationId', requireAuth, applyChatRate
 
 app.get('/api/folders', async (req, res) => {
     try {
-        if (!isValidDriveId(ROOT_FOLDER_ID)) {
-            res.status(500).json({ success: false, error: 'Invalid Google Drive root folder configuration' });
-            return;
-        }
-
         const drive = initDriveClient();
         if (!drive) {
             res.status(500).json({ success: false, error: 'Drive client initialization failed' });
