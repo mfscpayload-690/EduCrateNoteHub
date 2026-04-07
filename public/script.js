@@ -548,8 +548,8 @@ function openPdf(file) {
     elements.pdfIframe.classList.add('hidden');
     elements.pdfIframe.src = '';
 
-    // Use Google Drive's embedded preview viewer so the PDF opens within the page
-    const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
+    // Load PDF via backend proxy for consistent preview across environments.
+    const previewUrl = `${API_BASE}/pdf/${encodeURIComponent(file.id)}`;
     elements.pdfIframe.src = previewUrl;
 
     if (window.chatApp && typeof window.chatApp.onPdfOpened === 'function') {
