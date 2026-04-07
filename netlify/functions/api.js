@@ -105,7 +105,11 @@ const configuredOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS;
 
-const allowedOrigins = new Set(configuredOrigins);
+const runtimeOrigins = [process.env.URL, process.env.DEPLOY_PRIME_URL]
+    .map((origin) => (typeof origin === 'string' ? origin.trim() : ''))
+    .filter(Boolean);
+
+const allowedOrigins = new Set([...configuredOrigins, ...runtimeOrigins]);
 
 app.use(cors({
     origin(origin, callback) {
