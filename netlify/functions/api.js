@@ -15,7 +15,6 @@ function requireEnv(name) {
 }
 
 function validateEnvironment() {
-    requireEnv('GOOGLE_SERVICE_ACCOUNT_JSON');
     requireEnv('OPENROUTER_API_KEY');
     requireEnv('OPENROUTER_BASE_URL');
     requireEnv('OPENROUTER_DEFAULT_MODEL');
@@ -28,15 +27,18 @@ function validateEnvironment() {
     requireEnv('FIREBASE_AUTH_DOMAIN');
     requireEnv('FIREBASE_APP_ID');
 
-    let parsed;
-    try {
-        parsed = JSON.parse(requireEnv('GOOGLE_SERVICE_ACCOUNT_JSON'));
-    } catch (error) {
-        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
-    }
+    const rawServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    if (rawServiceAccount && String(rawServiceAccount).trim()) {
+        let parsed;
+        try {
+            parsed = JSON.parse(String(rawServiceAccount).trim());
+        } catch (error) {
+            throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
+        }
 
-    if (!parsed.client_email || !parsed.private_key || !parsed.project_id) {
-        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
+        if (!parsed.client_email || !parsed.private_key || !parsed.project_id) {
+            throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
+        }
     }
 }
 
@@ -347,11 +349,35 @@ const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
 let cachedDriveClient = null;
 let cachedAuth = null;
 
+function normalizePrivateKey(value) {
+    if (!value || typeof value !== 'string') return '';
+    return value.replace(/\\n/g, '\n');
+}
+
+function getDriveCredentials() {
+    const rawServiceAccount = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
+    if (rawServiceAccount && String(rawServiceAccount).trim()) {
+        const parsed = JSON.parse(String(rawServiceAccount).trim());
+        return {
+            project_id: parsed.project_id || process.env.FIREBASE_PROJECT_ID,
+            client_email: parsed.client_email,
+            private_key: normalizePrivateKey(parsed.private_key)
+        };
+    }
+
+    // Fallback path to keep Netlify Lambda env size small (avoid duplicating full JSON).
+    return {
+        project_id: process.env.FIREBASE_PROJECT_ID,
+        client_email: process.env.FIREBASE_CLIENT_EMAIL,
+        private_key: normalizePrivateKey(process.env.FIREBASE_PRIVATE_KEY)
+    };
+}
+
 const initDriveClient = () => {
     if (cachedDriveClient) return cachedDriveClient;
 
     try {
-        const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON.trim());
+        const credentials = getDriveCredentials();
         cachedAuth = new GoogleAuth({
             credentials,
             scopes: ['https://www.googleapis.com/auth/drive.readonly']
