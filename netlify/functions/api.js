@@ -101,11 +101,72 @@ const DEFAULT_ALLOWED_ORIGINS = [
     'http://127.0.0.1:8888'
 ];
 
+function parseUrlSafe(value) {
+    if (typeof value !== 'string' || !value.trim()) {
+        return null;
+    }
+    try {
+        return new URL(value.trim());
+    } catch (_) {
+        return null;
+    }
+}
+
+function normalizeOrigin(value) {
+    const parsed = parseUrlSafe(value);
+    return parsed ? parsed.origin : '';
+}
+
+function toNetlifyBaseHost(hostname) {
+    if (typeof hostname !== 'string' || !hostname.endsWith('.netlify.app')) {
+        return '';
+    }
+
+    const marker = '--';
+    const markerIndex = hostname.lastIndexOf(marker);
+    if (markerIndex === -1) {
+        return hostname;
+    }
+
+    const candidate = hostname.slice(markerIndex + marker.length);
+    return candidate.endsWith('.netlify.app') ? candidate : hostname;
+}
+
 const configuredOrigins = process.env.ALLOWED_ORIGINS
     ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
     : DEFAULT_ALLOWED_ORIGINS;
 
-const allowedOrigins = new Set(configuredOrigins);
+const runtimeOriginCandidates = [process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL];
+const runtimeOrigins = runtimeOriginCandidates
+    .map(normalizeOrigin)
+    .filter(Boolean);
+
+const allowedOrigins = new Set([...configuredOrigins, ...runtimeOrigins].map(normalizeOrigin).filter(Boolean));
+const siteName = typeof process.env.SITE_NAME === 'string' ? process.env.SITE_NAME.trim() : '';
+const netlifyBaseHosts = new Set(
+    [
+        ...runtimeOriginCandidates.map((origin) => {
+            const parsed = parseUrlSafe(origin);
+            return parsed ? toNetlifyBaseHost(parsed.hostname) : '';
+        }),
+        siteName ? `${siteName}.netlify.app` : ''
+    ].filter(Boolean)
+);
+
+function isAllowedNetlifySiteOrigin(origin) {
+    const parsed = parseUrlSafe(origin);
+    if (!parsed || parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.netlify.app')) {
+        return false;
+    }
+
+    for (const baseHost of netlifyBaseHosts) {
+        if (parsed.hostname === baseHost || parsed.hostname.endsWith(`--${baseHost}`)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 app.use(cors({
     origin(origin, callback) {
@@ -114,7 +175,8 @@ app.use(cors({
             return;
         }
 
-        if (allowedOrigins.has(origin)) {
+        const normalizedOrigin = normalizeOrigin(origin);
+        if (allowedOrigins.has(normalizedOrigin) || isAllowedNetlifySiteOrigin(normalizedOrigin)) {
             callback(null, true);
             return;
         }
@@ -287,6 +349,39 @@ function isValidDriveId(value) {
     return typeof value === 'string' && DRIVE_ID_PATTERN.test(value);
 }
 
+function extractDriveId(value) {
+    if (typeof value !== 'string') {
+        return '';
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return '';
+    }
+
+    if (isValidDriveId(trimmed)) {
+        return trimmed;
+    }
+
+    const folderPathMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]{8,200})/);
+    if (folderPathMatch && isValidDriveId(folderPathMatch[1])) {
+        return folderPathMatch[1];
+    }
+
+    const filePathMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]{8,200})/);
+    if (filePathMatch && isValidDriveId(filePathMatch[1])) {
+        return filePathMatch[1];
+    }
+
+    const parsed = parseUrlSafe(trimmed);
+    const idFromQuery = parsed ? parsed.searchParams.get('id') : '';
+    if (isValidDriveId(idFromQuery)) {
+        return idFromQuery;
+    }
+
+    return '';
+}
+
 function isValidDocId(value) {
     return typeof value === 'string' && DOC_ID_PATTERN.test(value);
 }
@@ -384,7 +479,16 @@ function buildModelMessages(systemPrompt, recentMessages) {
     );
 }
 
-const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const DEFAULT_ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const configuredRootFolderRaw = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').trim();
+const configuredRootFolderId = extractDriveId(configuredRootFolderRaw);
+if (configuredRootFolderRaw && !configuredRootFolderId) {
+    console.warn('Invalid GOOGLE_DRIVE_ROOT_FOLDER_ID format. Falling back to default root folder ID.');
+}
+const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
+const PDF_OR_SHORTCUT_QUERY =
+    "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
+const NETLIFY_FUNCTION_MAX_RESPONSE_BYTES = 6000000;
 
 let cachedDriveClient = null;
 let cachedAuth = null;
@@ -445,6 +549,37 @@ const getAccessToken = async () => {
 
 function naturalSort(a, b) {
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function formatFileSize(sizeValue) {
+    const parsedSize = Number.parseInt(sizeValue, 10);
+    if (!Number.isFinite(parsedSize) || parsedSize <= 0) {
+        return 'Unknown size';
+    }
+    return (parsedSize / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function resolvePdfFileId(file) {
+    if (file?.mimeType === 'application/vnd.google-apps.shortcut') {
+        return file?.shortcutDetails?.targetId || '';
+    }
+    return file?.id || '';
+}
+
+function mapDriveFileToApiFile(file) {
+    const resolvedId = resolvePdfFileId(file);
+    if (!isValidDriveId(resolvedId)) {
+        return null;
+    }
+
+    return {
+        id: resolvedId,
+        name: file.name,
+        size: formatFileSize(file.size),
+        viewUrl: `/api/view/${resolvedId}`,
+        downloadUrl: `/api/download/${resolvedId}`,
+        thumbnailUrl: `/api/thumbnail/${resolvedId}`
+    };
 }
 
 app.get('/api/config/firebase', (req, res) => {
@@ -869,7 +1004,9 @@ app.get('/api/folders', async (req, res) => {
         const response = await drive.files.list({
             q: `'${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
             fields: 'files(id, name)',
-            orderBy: 'name'
+            orderBy: 'name',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const sortedFolders = response.data.files.sort(naturalSort);
@@ -896,20 +1033,16 @@ app.get('/api/files/:folderId', async (req, res) => {
         }
 
         const response = await drive.files.list({
-            q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            orderBy: 'name'
+            q: `'${folderId}' in parents and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            orderBy: 'name',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const files = response.data.files
-            .map((file) => ({
-                id: file.id,
-                name: file.name,
-                size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
-                viewUrl: `/api/pdf/${file.id}`,
-                downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `/api/thumbnail/${file.id}`
-            }))
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
             .sort(naturalSort);
 
         res.setHeader('Cache-Control', 'public, max-age=30');
@@ -952,20 +1085,17 @@ app.get('/api/search', async (req, res) => {
         }
 
         const response = await drive.files.list({
-            q: `name contains '${sanitizedQuery}' and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            pageSize: 10
+            q: `name contains '${sanitizedQuery}' and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            pageSize: 10,
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
         const files = response.data.files
-            .map((file) => ({
-                id: file.id,
-                name: file.name,
-                size: (parseInt(file.size, 10) / 1024 / 1024).toFixed(1) + ' MB',
-                viewUrl: `/api/pdf/${file.id}`,
-                downloadUrl: `/api/download/${file.id}`,
-                thumbnailUrl: `/api/thumbnail/${file.id}`
-            }))
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
             .sort(naturalSort);
 
         res.setHeader('Cache-Control', 'public, max-age=900');
@@ -1000,13 +1130,20 @@ app.get('/api/pdf/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
+        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size', supportsAllDrives: true });
         if (meta.data.mimeType !== 'application/pdf') {
             res.status(400).json({ success: false, error: 'File is not a PDF' });
             return;
         }
 
-        const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+        const fileSizeBytes = Number.parseInt(meta.data.size, 10);
+        // Netlify Functions have a hard response payload cap; large PDFs must be rendered via Drive preview.
+        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > NETLIFY_FUNCTION_MAX_RESPONSE_BYTES) {
+            res.redirect(302, `https://drive.google.com/file/d/${fileId}/preview`);
+            return;
+        }
+
+        const response = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.data.name)}"`);
@@ -1044,7 +1181,7 @@ app.get('/api/thumbnail/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'thumbnailLink,hasThumbnail' });
+        const meta = await drive.files.get({ fileId, fields: 'thumbnailLink,hasThumbnail', supportsAllDrives: true });
         if (!meta.data.hasThumbnail || !meta.data.thumbnailLink) {
             res.status(404).json({ success: false, error: 'No thumbnail available' });
             return;
@@ -1090,13 +1227,13 @@ app.get('/api/download/:fileId', async (req, res) => {
             return;
         }
 
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
+        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size', supportsAllDrives: true });
         if (meta.data.mimeType !== 'application/pdf') {
             res.status(400).json({ success: false, error: 'File is not a PDF' });
             return;
         }
 
-        const response = await drive.files.get({ fileId, alt: 'media' }, { responseType: 'stream' });
+        const response = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'stream' });
 
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);

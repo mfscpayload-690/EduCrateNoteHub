@@ -122,6 +122,8 @@ Git
    FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"
    # OR
    # GOOGLE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+   # Optional: override the Drive root folder used for subjects
+   # GOOGLE_DRIVE_ROOT_FOLDER_ID=your_google_drive_root_folder_id
    
    # Server Configuration
    PORT=3000
@@ -157,8 +159,9 @@ Git
 3. Add environment variables in Netlify dashboard
 4. Avoid AWS Lambda 4KB env limit: do not set both `GOOGLE_SERVICE_ACCOUNT_JSON` and `FIREBASE_PRIVATE_KEY`/`FIREBASE_CLIENT_EMAIL` together
 5. Set `ALLOWED_ORIGINS` to include your deployed domain (for example `https://your-site.netlify.app,https://your-custom-domain.com`)
-6. In Firebase Console -> Authentication -> Settings -> Authorized domains, add your Netlify domain(s)
-7. Deploy!
+6. If your Drive structure changes, set `GOOGLE_DRIVE_ROOT_FOLDER_ID` to the folder ID that contains your subject folders
+7. In Firebase Console -> Authentication -> Settings -> Authorized domains, add your Netlify domain(s)
+8. Deploy!
 
 [![Deploy to Netlify](https://www.netlify.com/img/deploy/button.svg)](https://app.netlify.com/start/deploy?repository=https://github.com/MabelMoncy/EduCrateNoteHub)
 

@@ -20,7 +20,7 @@
             'auth/popup-closed-by-user': 'Google sign-in was cancelled.',
             'auth/popup-blocked': 'Popup blocked. Redirecting to Google sign-in.',
             'auth/operation-not-supported-in-this-environment': 'Using secure redirect sign-in on this device.',
-            'auth/unauthorized-domain': `Google sign-in is blocked for ${host}. Add this domain in Firebase Auth -> Settings -> Authorized domains.`,
+            'auth/unauthorized-domain': `Google sign-in is blocked for ${host}. Add this exact domain in Firebase Auth -> Settings -> Authorized domains. For Netlify Deploy Preview URLs, add the current preview domain before testing Google sign-in.`,
             'auth/operation-not-allowed': 'Google sign-in provider is disabled in Firebase console. Enable Google in Authentication -> Sign-in method.',
             'auth/network-request-failed': 'Network error. Please check your connection.',
             'auth/too-many-requests': 'Too many attempts. Please try again later.'
