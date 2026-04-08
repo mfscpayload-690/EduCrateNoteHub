@@ -16,6 +16,14 @@ function normalizeModelName(model) {
 const DEFAULT_MODEL = normalizeModelName(
     process.env.OPENROUTER_DEFAULT_MODEL || 'nvidia/nemotron-3-super:free'
 );
+const MODEL_ALLOWLIST = Array.from(
+    new Set(
+        (process.env.OPENROUTER_MODEL_ALLOWLIST || '')
+            .split(',')
+            .map((value) => normalizeModelName(value))
+            .filter(Boolean)
+    )
+);
 const REQUEST_TIMEOUT_MS = Number.parseInt(process.env.OPENROUTER_TIMEOUT_MS || '45000', 10);
 const DEFAULT_MAX_TOKENS = Number.parseInt(process.env.OPENROUTER_MAX_TOKENS || '320', 10);
 
@@ -42,20 +50,37 @@ function buildError(status, message, details) {
     return err;
 }
 
-async function createChatCompletion({ model = DEFAULT_MODEL, messages, timeoutMs = REQUEST_TIMEOUT_MS }) {
-    if (!Array.isArray(messages) || messages.length === 0) {
-        throw buildError(400, 'Chat messages are required');
+function buildModelCandidates(model) {
+    const requestedModel = normalizeModelName(model || DEFAULT_MODEL);
+    const candidates = [requestedModel, DEFAULT_MODEL].concat(MODEL_ALLOWLIST);
+    return Array.from(new Set(candidates.filter(Boolean)));
+}
+
+function shouldTryFallback(error, hasNextCandidate) {
+    if (!hasNextCandidate || !error) {
+        return false;
     }
 
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) {
-        throw buildError(500, 'OpenRouter API key is not configured');
+    const status = Number(error.status || 0);
+    if ([429, 500, 502, 503, 504].includes(status)) {
+        return true;
     }
 
+    if (status === 400 || status === 404) {
+        const text = String(error.message || '').toLowerCase();
+        if (text.includes('model') || text.includes('provider') || text.includes('route')) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+async function requestCompletionWithModel({ apiKey, model, messages, timeoutMs }) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const start = Date.now();
-    const requestModel = normalizeModelName(model || DEFAULT_MODEL);
+    const requestModel = normalizeModelName(model);
 
     try {
         const response = await fetch(`${DEFAULT_BASE_URL}/chat/completions`, {
@@ -130,6 +155,48 @@ async function createChatCompletion({ model = DEFAULT_MODEL, messages, timeoutMs
     } finally {
         clearTimeout(timeout);
     }
+}
+
+async function createChatCompletion({ model = DEFAULT_MODEL, messages, timeoutMs = REQUEST_TIMEOUT_MS }) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+        throw buildError(400, 'Chat messages are required');
+    }
+
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+        throw buildError(500, 'OpenRouter API key is not configured');
+    }
+
+    const candidates = buildModelCandidates(model);
+    let lastError = null;
+
+    for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        const hasNext = index < candidates.length - 1;
+
+        try {
+            return await requestCompletionWithModel({
+                apiKey,
+                model: candidate,
+                messages,
+                timeoutMs
+            });
+        } catch (error) {
+            lastError = error;
+            if (shouldTryFallback(error, hasNext)) {
+                console.warn('[openrouter] trying fallback model', {
+                    fromModel: candidate,
+                    nextModel: candidates[index + 1],
+                    status: error.status || 0,
+                    message: error.message || 'unknown'
+                });
+                continue;
+            }
+            throw error;
+        }
+    }
+
+    throw lastError || buildError(502, 'OpenRouter request failed');
 }
 
 module.exports = {
