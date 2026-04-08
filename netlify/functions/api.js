@@ -25,6 +25,24 @@ function normalizePrivateKey(value) {
     return unwrapped.replace(/\\n/g, '\n');
 }
 
+function getFirstEnv(...names) {
+    for (const name of names) {
+        const value = process.env[name];
+        if (typeof value === 'string' && value.trim()) {
+            return value.trim();
+        }
+    }
+    return '';
+}
+
+function deriveProjectIdFromAuthDomain(authDomain) {
+    if (typeof authDomain !== 'string') {
+        return '';
+    }
+    const match = authDomain.trim().match(/^([a-z0-9-]+)\.firebaseapp\.com$/i);
+    return match ? match[1] : '';
+}
+
 function parseServiceAccountJson(rawValue) {
     const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
     if (!raw) {
@@ -489,6 +507,9 @@ const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
 const PDF_OR_SHORTCUT_QUERY =
     "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
 const NETLIFY_FUNCTION_MAX_RESPONSE_BYTES = 6000000;
+const DRIVE_LIST_PAGE_SIZE = 1000;
+const DRIVE_PARENT_QUERY_BATCH_SIZE = 20;
+const MAX_RECURSIVE_FOLDER_SCAN = 500;
 
 let cachedDriveClient = null;
 let cachedAuth = null;
@@ -582,16 +603,148 @@ function mapDriveFileToApiFile(file) {
     };
 }
 
-app.get('/api/config/firebase', (req, res) => {
-    const apiKey = process.env.FIREBASE_API_KEY;
-    const authDomain = process.env.FIREBASE_AUTH_DOMAIN;
-    const projectId = process.env.FIREBASE_PROJECT_ID;
-    const appId = process.env.FIREBASE_APP_ID;
+function chunkArray(items, chunkSize) {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += chunkSize) {
+        chunks.push(items.slice(index, index + chunkSize));
+    }
+    return chunks;
+}
 
-    if (!apiKey || !authDomain || !projectId || !appId) {
+async function listDriveFilesPaginated(drive, options) {
+    const files = [];
+    let pageToken = undefined;
+
+    do {
+        const response = await drive.files.list({
+            ...options,
+            pageSize: DRIVE_LIST_PAGE_SIZE,
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            pageToken
+        });
+
+        files.push(...(response.data.files || []));
+        pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    return files;
+}
+
+async function listPdfFilesAcrossParents(drive, parentIds) {
+    const validParentIds = parentIds.filter(isValidDriveId);
+    if (!validParentIds.length) {
+        return [];
+    }
+
+    const allFiles = [];
+    const parentChunks = chunkArray(validParentIds, DRIVE_PARENT_QUERY_BATCH_SIZE);
+
+    for (const parentChunk of parentChunks) {
+        const parentQuery = parentChunk.map((id) => `'${id}' in parents`).join(' or ');
+        const files = await listDriveFilesPaginated(drive, {
+            q: `(${parentQuery}) and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'nextPageToken, files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            orderBy: 'name'
+        });
+        allFiles.push(...files);
+    }
+
+    return allFiles;
+}
+
+async function listSubfoldersAcrossParents(drive, parentIds) {
+    const validParentIds = parentIds.filter(isValidDriveId);
+    if (!validParentIds.length) {
+        return [];
+    }
+
+    const allFolders = [];
+    const parentChunks = chunkArray(validParentIds, DRIVE_PARENT_QUERY_BATCH_SIZE);
+
+    for (const parentChunk of parentChunks) {
+        const parentQuery = parentChunk.map((id) => `'${id}' in parents`).join(' or ');
+        const folders = await listDriveFilesPaginated(drive, {
+            q: `(${parentQuery}) and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+            fields: 'nextPageToken, files(id, name)',
+            orderBy: 'name'
+        });
+        allFolders.push(...folders);
+    }
+
+    return allFolders;
+}
+
+async function listPdfFilesRecursively(drive, folderId) {
+    const queue = [folderId];
+    const visited = new Set();
+    const filesById = new Map();
+
+    while (queue.length > 0 && visited.size < MAX_RECURSIVE_FOLDER_SCAN) {
+        const currentBatch = [];
+        while (queue.length > 0 && currentBatch.length < DRIVE_PARENT_QUERY_BATCH_SIZE) {
+            const nextFolderId = queue.shift();
+            if (!isValidDriveId(nextFolderId) || visited.has(nextFolderId)) {
+                continue;
+            }
+            visited.add(nextFolderId);
+            currentBatch.push(nextFolderId);
+        }
+
+        if (!currentBatch.length) {
+            continue;
+        }
+
+        const [pdfFiles, subfolders] = await Promise.all([
+            listPdfFilesAcrossParents(drive, currentBatch),
+            listSubfoldersAcrossParents(drive, currentBatch)
+        ]);
+
+        for (const file of pdfFiles) {
+            const resolvedId = resolvePdfFileId(file);
+            if (isValidDriveId(resolvedId) && !filesById.has(resolvedId)) {
+                filesById.set(resolvedId, file);
+            }
+        }
+
+        for (const folder of subfolders) {
+            if (isValidDriveId(folder.id) && !visited.has(folder.id)) {
+                queue.push(folder.id);
+            }
+        }
+    }
+
+    if (queue.length > 0) {
+        console.warn(
+            `Folder traversal reached limit (${MAX_RECURSIVE_FOLDER_SCAN}) for root folder ${folderId}. Some PDFs may be omitted.`
+        );
+    }
+
+    return Array.from(filesById.values());
+}
+
+app.get('/api/config/firebase', (req, res) => {
+    const apiKey = getFirstEnv('FIREBASE_API_KEY', 'NEXT_PUBLIC_FIREBASE_API_KEY', 'VITE_FIREBASE_API_KEY');
+    const authDomain = getFirstEnv('FIREBASE_AUTH_DOMAIN', 'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'VITE_FIREBASE_AUTH_DOMAIN');
+    const projectId =
+        getFirstEnv('FIREBASE_PROJECT_ID', 'NEXT_PUBLIC_FIREBASE_PROJECT_ID', 'VITE_FIREBASE_PROJECT_ID') ||
+        deriveProjectIdFromAuthDomain(authDomain);
+    const appId = getFirstEnv('FIREBASE_APP_ID', 'NEXT_PUBLIC_FIREBASE_APP_ID', 'VITE_FIREBASE_APP_ID');
+    const messagingSenderId = getFirstEnv(
+        'FIREBASE_MESSAGING_SENDER_ID',
+        'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID',
+        'VITE_FIREBASE_MESSAGING_SENDER_ID'
+    );
+    const storageBucket =
+        getFirstEnv('FIREBASE_STORAGE_BUCKET', 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET', 'VITE_FIREBASE_STORAGE_BUCKET') ||
+        (projectId ? `${projectId}.appspot.com` : '');
+
+    // For Firebase Auth flow, apiKey + authDomain are mandatory.
+    if (!apiKey || !authDomain) {
         res.status(500).json({
             success: false,
-            error: 'Firebase client configuration is incomplete on the server'
+            error: 'Firebase client config missing required values (FIREBASE_API_KEY and FIREBASE_AUTH_DOMAIN)'
         });
         return;
     }
@@ -604,8 +757,8 @@ app.get('/api/config/firebase', (req, res) => {
             authDomain,
             projectId,
             appId,
-            messagingSenderId: process.env.FIREBASE_MESSAGING_SENDER_ID || '',
-            storageBucket: process.env.FIREBASE_STORAGE_BUCKET || ''
+            messagingSenderId,
+            storageBucket
         }
     });
 });
@@ -1032,15 +1185,8 @@ app.get('/api/files/:folderId', async (req, res) => {
             return;
         }
 
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
-            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
-            orderBy: 'name',
-            supportsAllDrives: true,
-            includeItemsFromAllDrives: true
-        });
-
-        const files = response.data.files
+        const driveFiles = await listPdfFilesRecursively(drive, folderId);
+        const files = driveFiles
             .map(mapDriveFileToApiFile)
             .filter(Boolean)
             .sort(naturalSort);

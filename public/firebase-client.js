@@ -42,12 +42,25 @@
             });
 
             if (!response.ok) {
-                throw new Error('Unable to load Firebase config');
+                let details = '';
+                try {
+                    const errorPayload = await response.json();
+                    details = (errorPayload && errorPayload.error) ? String(errorPayload.error) : '';
+                } catch (_) {
+                    // ignore parse errors and keep fallback
+                }
+                const error = new Error(details || 'Unable to load Firebase config');
+                error.code = 'config/unavailable';
+                error.userMessage = details || 'Firebase configuration is missing in this deploy.';
+                throw error;
             }
 
             const payload = await response.json();
             if (!payload.success || !payload.data) {
-                throw new Error('Invalid Firebase config response');
+                const error = new Error('Invalid Firebase config response');
+                error.code = 'config/invalid';
+                error.userMessage = 'Firebase configuration response is invalid.';
+                throw error;
             }
 
             return payload.data;
@@ -137,7 +150,13 @@
                 await state.auth.signInWithRedirect(state.googleProvider);
                 return null;
             }
-            error.userMessage = mapAuthError(error);
+            if (!error.userMessage) {
+                if (error.code && error.code.startsWith('config/')) {
+                    error.userMessage = error.message || 'Firebase configuration is missing in this deploy.';
+                } else {
+                    error.userMessage = mapAuthError(error);
+                }
+            }
             throw error;
         }
     }
