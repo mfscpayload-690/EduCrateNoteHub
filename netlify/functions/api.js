@@ -506,6 +506,8 @@ if (configuredRootFolderRaw && !configuredRootFolderId) {
 const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
 const PDF_OR_SHORTCUT_QUERY =
     "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
+const FOLDER_OR_SHORTCUT_TO_FOLDER_QUERY =
+    "(mimeType = 'application/vnd.google-apps.folder' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/vnd.google-apps.folder'))";
 const NETLIFY_FUNCTION_MAX_RESPONSE_BYTES = 6000000;
 const DRIVE_LIST_PAGE_SIZE = 1000;
 const DRIVE_PARENT_QUERY_BATCH_SIZE = 20;
@@ -660,20 +662,36 @@ async function listSubfoldersAcrossParents(drive, parentIds) {
         return [];
     }
 
-    const allFolders = [];
+    const allFolderCandidates = [];
     const parentChunks = chunkArray(validParentIds, DRIVE_PARENT_QUERY_BATCH_SIZE);
 
     for (const parentChunk of parentChunks) {
         const parentQuery = parentChunk.map((id) => `'${id}' in parents`).join(' or ');
-        const folders = await listDriveFilesPaginated(drive, {
-            q: `(${parentQuery}) and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-            fields: 'nextPageToken, files(id, name)',
+        const folderCandidates = await listDriveFilesPaginated(drive, {
+            q: `(${parentQuery}) and ${FOLDER_OR_SHORTCUT_TO_FOLDER_QUERY} and trashed = false`,
+            fields: 'nextPageToken, files(id, name, mimeType, shortcutDetails(targetId,targetMimeType))',
             orderBy: 'name'
         });
-        allFolders.push(...folders);
+        allFolderCandidates.push(...folderCandidates);
     }
 
-    return allFolders;
+    const folderIds = [];
+    for (const candidate of allFolderCandidates) {
+        if (candidate?.mimeType === 'application/vnd.google-apps.folder' && isValidDriveId(candidate.id)) {
+            folderIds.push(candidate.id);
+            continue;
+        }
+
+        if (
+            candidate?.mimeType === 'application/vnd.google-apps.shortcut' &&
+            candidate?.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder' &&
+            isValidDriveId(candidate?.shortcutDetails?.targetId)
+        ) {
+            folderIds.push(candidate.shortcutDetails.targetId);
+        }
+    }
+
+    return folderIds;
 }
 
 async function listPdfFilesRecursively(drive, folderId) {
@@ -708,9 +726,9 @@ async function listPdfFilesRecursively(drive, folderId) {
             }
         }
 
-        for (const folder of subfolders) {
-            if (isValidDriveId(folder.id) && !visited.has(folder.id)) {
-                queue.push(folder.id);
+        for (const folderId of subfolders) {
+            if (isValidDriveId(folderId) && !visited.has(folderId)) {
+                queue.push(folderId);
             }
         }
     }
@@ -725,7 +743,12 @@ async function listPdfFilesRecursively(drive, folderId) {
 }
 
 app.get('/api/config/firebase', (req, res) => {
-    const apiKey = getFirstEnv('FIREBASE_API_KEY', 'NEXT_PUBLIC_FIREBASE_API_KEY', 'VITE_FIREBASE_API_KEY');
+    const apiKey = getFirstEnv(
+        'FIREBASE_API_KEY',
+        'FIREBASE_APL_KEY', // Backward-compatible alias for common typo in hosting dashboards.
+        'NEXT_PUBLIC_FIREBASE_API_KEY',
+        'VITE_FIREBASE_API_KEY'
+    );
     const authDomain = getFirstEnv('FIREBASE_AUTH_DOMAIN', 'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN', 'VITE_FIREBASE_AUTH_DOMAIN');
     const projectId =
         getFirstEnv('FIREBASE_PROJECT_ID', 'NEXT_PUBLIC_FIREBASE_PROJECT_ID', 'VITE_FIREBASE_PROJECT_ID') ||
@@ -1010,6 +1033,13 @@ app.post('/api/chat/conversations/:conversationId/message', requireAuth, applyCh
                 timeoutMs: 60000
             });
         } catch (error) {
+            console.error('OpenRouter completion failed:', {
+                status: error?.status || null,
+                message: error?.message || 'Unknown OpenRouter error',
+                details: error?.details || null,
+                model
+            });
+
             const fallbackMessage = await appendMessage({
                 uid: req.user.uid,
                 conversationId,

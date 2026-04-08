@@ -19,7 +19,8 @@
         pendingSendTimer: null,
         pendingRetryContent: null,
         activeConversationMenuId: null,
-        isResizingChat: false
+        isResizingChat: false,
+        authSyncInFlight: false
     };
 
     const elements = {};
@@ -598,6 +599,7 @@
                 await global.firebaseClient.signInWithEmail(email, password);
             }
 
+            await syncAuthStateFromClient();
             closeAuthModal();
         } catch (error) {
             elements.authError.textContent = error.userMessage || 'Authentication failed.';
@@ -612,6 +614,7 @@
         try {
             const user = await global.firebaseClient.signInWithGoogle();
             if (user) {
+                await syncAuthStateFromClient();
                 closeAuthModal();
             } else {
                 setStatus('Redirecting to Google sign-in...', 'neutral');
@@ -725,6 +728,20 @@
                 closeAuthModal();
             }
         });
+
+        document.addEventListener('visibilitychange', () => {
+            if (!document.hidden) {
+                syncAuthStateFromClient().catch(() => {
+                    // best-effort sync when returning from mobile auth redirects
+                });
+            }
+        });
+
+        global.addEventListener('focus', () => {
+            syncAuthStateFromClient().catch(() => {
+                // best-effort sync for focus transitions
+            });
+        });
     }
 
     function applySavedChatPanelWidth() {
@@ -834,6 +851,27 @@
         }
     }
 
+    async function syncAuthStateFromClient() {
+        if (state.authSyncInFlight) {
+            return;
+        }
+
+        state.authSyncInFlight = true;
+        try {
+            const user = await global.firebaseClient.getCurrentUser();
+            const currentUid = state.currentUser ? state.currentUser.uid : '';
+            const nextUid = user ? user.uid : '';
+
+            if (currentUid !== nextUid) {
+                await refreshAuthAndConversations(user || null);
+            } else {
+                setAuthUi(user || null);
+            }
+        } finally {
+            state.authSyncInFlight = false;
+        }
+    }
+
     async function init() {
         Object.assign(elements, {
             accountMenu: document.getElementById('accountMenu'),
@@ -874,8 +912,11 @@
         await global.firebaseClient.init();
 
         await global.firebaseClient.onAuthStateChanged((user) => {
-            refreshAuthAndConversations(user);
+            refreshAuthAndConversations(user).catch((error) => {
+                setStatus(error.message || 'Failed to refresh auth state', 'error');
+            });
         });
+        await syncAuthStateFromClient();
     }
 
     async function ensureAuthenticated() {
