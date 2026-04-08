@@ -5,14 +5,6 @@ const serverless = require('serverless-http');
 const helmet = require('helmet');
 const { pipeline } = require('stream');
 
-function requireEnv(name) {
-    const value = process.env[name];
-    if (!value || !String(value).trim()) {
-        throw new Error(`Missing required environment variable: ${name}`);
-    }
-    return String(value).trim();
-}
-
 function normalizePrivateKey(value) {
     if (!value || typeof value !== 'string') return '';
     const trimmed = value.trim();
@@ -86,15 +78,23 @@ function parseServiceAccountJson(rawValue) {
     let parsed;
     try {
         parsed = JSON.parse(raw);
-    } catch (_) {
-        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
+    } catch (firstError) {
+        // Handle common dashboard paste patterns: quoted JSON string or escaped JSON.
+        try {
+            const unwrapped =
+                (raw.startsWith('"') && raw.endsWith('"')) ||
+                (raw.startsWith("'") && raw.endsWith("'"))
+                    ? raw.slice(1, -1)
+                    : raw;
+            parsed = JSON.parse(unwrapped.replace(/\\"/g, '"'));
+        } catch (_) {
+            throw new Error(`GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON (${firstError.message})`);
+        }
     }
 
     const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : '';
-    const privateKey = normalizePrivateKey(parsed.private_key);
-    const projectId =
-        (typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '') ||
-        (typeof process.env.FIREBASE_PROJECT_ID === 'string' ? process.env.FIREBASE_PROJECT_ID.trim() : '');
+    const privateKey = normalizePrivateKey(typeof parsed.private_key === 'string' ? parsed.private_key : '');
+    const projectId = typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '';
 
     if (!projectId || !clientEmail || !privateKey) {
         throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
@@ -108,14 +108,11 @@ function parseServiceAccountJson(rawValue) {
 }
 
 function getDriveCredentials() {
-    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
-    if (fromJson) return fromJson;
-
-    return {
-        project_id: requireEnv('FIREBASE_PROJECT_ID'),
-        client_email: requireEnv('FIREBASE_CLIENT_EMAIL'),
-        private_key: normalizePrivateKey(requireEnv('FIREBASE_PRIVATE_KEY'))
-    };
+    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '');
+    if (!fromJson) {
+        throw new Error('Missing required environment variable: GOOGLE_SERVICE_ACCOUNT_JSON');
+    }
+    return fromJson;
 }
 
 const DRIVE_ID_PATTERN = /^[a-zA-Z0-9_-]{8,200}$/;
