@@ -6,12 +6,6 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: "Git ref to deploy (branch, tag, or SHA)"
-        required: false
-        default: "main"
-        type: string
 
 permissions:
   contents: read
@@ -38,25 +32,15 @@ jobs:
       - name: Checkout (manual dispatch commit)
         if: ${{ github.event_name == 'workflow_dispatch' }}
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.ref || 'main' }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Quick syntax guard before deploy
-        run: |
-          set -euo pipefail
-          node --check netlify/functions/api.js
-          node --check public/script.js
-          node --check public/chat.js
-          node --check public/firebase-client.js
 
       - name: Deploy to Netlify Production
         id: deploy
@@ -74,7 +58,6 @@ jobs:
             --prod \
             --dir=public \
             --functions=netlify/functions \
-            --message="Production deploy - ${{ github.sha }}" \
             --site="$NETLIFY_SITE_ID" \
             --auth="$NETLIFY_AUTH_TOKEN" \
             --json > netlify-production.json 2> netlify-production.err.log
@@ -95,23 +78,12 @@ jobs:
           set -euo pipefail
           curl --fail --show-error --silent --location "$PROD_URL/" > /dev/null
 
-      - name: Smoke test Firebase config endpoint
+      - name: Smoke test API
         env:
           PROD_URL: ${{ steps.deploy.outputs.production_url }}
         run: |
           set -euo pipefail
-          curl --fail --show-error --silent --location "$PROD_URL/api/config/firebase" > /dev/null
-
-      - name: Smoke test protected route rejects anonymous calls
-        env:
-          PROD_URL: ${{ steps.deploy.outputs.production_url }}
-        run: |
-          set -euo pipefail
-          STATUS=$(curl --silent --output /dev/null --write-out "%{http_code}" --location "$PROD_URL/api/auth/me")
-          if [ "$STATUS" != "401" ]; then
-            echo "Expected 401 from /api/auth/me, got $STATUS"
-            exit 1
-          fi
+          curl --fail --show-error --silent --location "$PROD_URL/api/folders" > /dev/null
 
       - name: Upload production deploy artifacts
         if: always()

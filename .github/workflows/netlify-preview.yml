@@ -3,8 +3,6 @@ name: Netlify Preview Deploy
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -19,7 +17,7 @@ jobs:
     name: Deploy PR Preview
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    if: ${{ !github.event.pull_request.draft && !github.event.pull_request.head.repo.fork && secrets.NETLIFY_AUTH_TOKEN != '' && secrets.NETLIFY_SITE_ID != '' }}
+    if: ${{ !github.event.pull_request.draft && secrets.NETLIFY_AUTH_TOKEN != '' && secrets.NETLIFY_SITE_ID != '' }}
 
     steps:
       - name: Checkout
@@ -28,19 +26,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Quick syntax guard before deploy
-        run: |
-          set -euo pipefail
-          node --check netlify/functions/api.js
-          node --check public/script.js
-          node --check public/chat.js
-          node --check public/firebase-client.js
 
       - name: Deploy to Netlify Preview
         id: deploy
@@ -52,7 +42,6 @@ jobs:
           npx netlify-cli@latest deploy \
             --dir=public \
             --functions=netlify/functions \
-            --message="PR #${{ github.event.pull_request.number }} - ${{ github.sha }}" \
             --site="$NETLIFY_SITE_ID" \
             --auth="$NETLIFY_AUTH_TOKEN" \
             --json > netlify-preview.json 2> netlify-preview.err.log

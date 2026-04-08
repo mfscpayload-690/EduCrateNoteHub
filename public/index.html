@@ -25,7 +25,7 @@
         /* Smooth scrolling for touch devices */
         * { -webkit-tap-highlight-color: transparent; }
         /* PDF Viewer Styles - Mobile Optimized */
-        #pdfIframe { border: none; display: block; width: 100%; height: 100%; min-height: 100%; background: white; }
+        #pdfIframe { border: none; width: 100%; height: 100%; background: white; }
         /* Pull-to-refresh indicator */
         #pullRefreshIndicator { position: fixed; top: 64px; left: 50%; transform: translateX(-50%) translateY(-60px); z-index: 55; transition: transform 0.2s ease, opacity 0.2s ease; opacity: 0; pointer-events: none; }
         #pullRefreshIndicator.visible { opacity: 1; }
@@ -33,11 +33,9 @@
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 
         :root {
-            --app-vh: 1vh;
             --bg-0: #f6f8ff;
             --bg-1: #eef2ff;
             --bg-2: #e6ebff;
-            --chat-panel-width: 380px;
             --acc-1: #7b5cff;
             --acc-2: #4fd1ff;
             --acc-3: #ff5da2;
@@ -73,12 +71,6 @@
                 linear-gradient(145deg, var(--bg-0), var(--bg-1) 45%, var(--bg-2));
             position: relative;
             overflow-x: hidden;
-        }
-
-        body.chat-resizing,
-        body.chat-resizing * {
-            cursor: col-resize !important;
-            user-select: none !important;
         }
 
         body::before {
@@ -230,51 +222,6 @@
             color: var(--text-main) !important;
         }
 
-        #pdfModal {
-            height: calc(var(--app-vh) * 100);
-            height: 100dvh;
-        }
-
-        #pdfModal .relative.flex.flex-col.h-full.w-full.overflow-hidden,
-        #pdfContainer,
-        #pdfViewerPane,
-        #chatPanel,
-        #chatMessages {
-            min-height: 0;
-        }
-
-        #chatPanel {
-            width: min(100vw, 24rem);
-        }
-
-        #chatResizeHandle {
-            touch-action: none;
-        }
-
-        .chat-line-clamp-2 {
-            display: -webkit-box;
-            -webkit-line-clamp: 2;
-            -webkit-box-orient: vertical;
-            overflow: hidden;
-        }
-
-        @media (min-width: 768px) {
-            #chatPanel {
-                width: var(--chat-panel-width);
-                max-width: none;
-            }
-        }
-
-        @media (max-width: 767px) {
-            #pdfModal .flex.items-center.justify-between {
-                padding-top: calc(0.5rem + env(safe-area-inset-top));
-            }
-
-            #chatPanel {
-                padding-bottom: env(safe-area-inset-bottom);
-            }
-        }
-
         html:not(.dark) .text-slate-400,
         html:not(.dark) .text-slate-500,
         html:not(.dark) .text-slate-600,
@@ -302,8 +249,8 @@
 <body class="min-h-screen font-sans selection:bg-primary-100 dark:selection:bg-primary-900">
     
     <!-- Navigation -->
-    <nav class="fixed top-0 left-0 right-0 bg-white/90 dark:bg-black/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800 z-[60]">
-    <div class="flex items-center justify-between px-4 md:px-6 h-16 max-w-7xl mx-auto">
+    <nav class="fixed top-0 left-0 right-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-[60]">
+    <div class="flex items-center justify-between px-4 h-16 max-w-7xl mx-auto">
         
         <!-- Left Section: Menu & Logo -->
         <div id="logoContainer" class="flex items-center gap-3 transition-all duration-300">
@@ -311,7 +258,7 @@
                 <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
             </button>
             <a href="/" class="flex items-center">
-                <span class="text-lg sm:text-xl font-bold text-primary-600 dark:text-primary-400 tracking-tight">EduCrate</span>
+                <span class="text-xl font-extrabold text-primary-600 dark:text-primary-400 tracking-tight">EduCrate</span>
             </a>
         </div>
 
@@ -322,7 +269,7 @@
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
             </button>
 
-            <div class="relative w-full max-w-lg">
+            <div class="relative w-full max-w-md">
                 <!-- Actual Search Input -->
                 <div id="searchBarContainer" class="hidden md:block relative w-full">
                     <input type="text" id="searchInput" aria-label="Search notes" aria-autocomplete="list" aria-expanded="false" aria-controls="searchResults" placeholder="Search notes..." class="w-full pl-4 pr-10 py-2 bg-slate-100 dark:bg-slate-800 border-transparent rounded-xl text-sm focus:ring-2 focus:ring-primary-500 dark:text-white outline-none transition-all">
@@ -341,26 +288,15 @@
                 <svg id="sunIcon" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
                 <svg id="moonIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
             </button>
-            <div id="accountMenu" class="relative">
-                <button id="accountMenuBtn" aria-label="Account menu" class="p-2.5 rounded-xl text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all border border-transparent hover:border-slate-300 dark:hover:border-slate-700">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.121 17.804A8.966 8.966 0 0112 15a8.966 8.966 0 016.879 2.804M15 11a3 3 0 11-6 0 3 3 0 016 0zm6 1a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                </button>
-                <div id="accountMenuDropdown" class="hidden absolute right-0 mt-2 w-64 rounded-2xl border border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-black/95 backdrop-blur-md shadow-2xl p-3">
-                    <p class="text-[11px] uppercase tracking-wider text-slate-400 mb-1">Account</p>
-                    <p id="accountMenuEmail" class="text-xs text-slate-700 dark:text-slate-200 truncate mb-3">Not signed in</p>
-                    <button id="accountSignInBtn" class="w-full px-3 py-2 rounded-xl bg-primary-600 text-white text-xs font-semibold hover:bg-primary-700 transition-colors">Sign in / Sign up</button>
-                    <button id="accountSignOutBtn" class="hidden w-full mt-2 px-3 py-2 rounded-xl border border-red-300 text-red-500 text-xs font-semibold hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">Logout</button>
-                </div>
-            </div>
         </div>
     </div>
 </nav>
     
     <!-- Sidebar -->
     <div id="sidebarOverlay" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-30 hidden"></div>
-    <aside id="sidebar" class="fixed left-0 top-16 bottom-0 w-72 bg-white dark:bg-black border-r border-slate-200 dark:border-slate-800 z-30 -translate-x-full md:translate-x-0 transition-transform duration-300">
-        <div class="p-5 flex flex-col h-full">
-            <h2 class="text-[11px] font-semibold text-slate-400 uppercase tracking-[0.16em] mb-4 px-2">Subjects</h2>
+    <aside id="sidebar" class="fixed left-0 top-16 bottom-0 w-64 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 z-30 -translate-x-full md:translate-x-0 transition-transform duration-300">
+        <div class="p-4 flex flex-col h-full">
+            <h2 class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em] mb-4 px-2">Subjects</h2>
             <div id="foldersList" class="space-y-1 flex-1 overflow-y-auto">
                 <div class="p-2 space-y-3"><div class="h-9 shimmer rounded-lg"></div><div class="h-9 shimmer rounded-lg"></div></div>
             </div>
@@ -374,35 +310,35 @@
     </aside>
     
     <!-- Main Content -->
-    <main class="md:ml-72 pt-16 min-h-screen">
-        <div id="contentHeader" class="hidden px-6 py-5 md:px-8 md:py-6 bg-white/80 dark:bg-black/80 backdrop-blur-sm border-b border-slate-200/70 dark:border-slate-800">
-            <h1 id="contentTitle" class="text-2xl md:text-3xl font-semibold dark:text-white tracking-tight">Subject</h1>
+    <main class="md:ml-64 pt-16 min-h-screen">
+        <div id="contentHeader" class="hidden p-6 md:p-8 bg-white dark:bg-slate-950 border-b border-slate-100 dark:border-slate-800">
+            <h1 id="contentTitle" class="text-2xl font-black dark:text-white tracking-tight">Subject</h1>
         </div>
         
-        <div class="p-5 md:p-8">
-            <div id="welcomeState" class="flex flex-col items-center justify-center py-20 md:py-24 text-center">
+        <div class="p-6 md:p-8">
+            <div id="welcomeState" class="flex flex-col items-center justify-center py-24 text-center">
                 <div class="w-20 h-20 rounded-[2rem] flex items-center justify-center mb-8 overflow-hidden">
                     <img src="/logo.png" alt="EduCrate" width="80" height="80" class="w-full h-full object-cover" loading="lazy" decoding="async">
                 </div>
-                <h2 class="text-2xl md:text-3xl font-semibold dark:text-white mb-3 tracking-tight">Welcome to EduCrate</h2>
-                <p class="text-slate-500 dark:text-slate-400 max-w-md mx-auto leading-relaxed mb-7">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
-                <button id="browseSubjectsBtn" class="focus-ring inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-semibold hover:bg-primary-700 transition-all shadow-md shadow-primary-500/20 active:scale-95">
+                <h2 class="text-3xl font-extrabold dark:text-white mb-3">Welcome to EduCrate</h2>
+                <p class="text-slate-500 max-w-sm mx-auto leading-relaxed mb-6">The dedicated digital library for S4 Computer Science & Engineering Students.</p>
+                <button id="browseSubjectsBtn" class="inline-flex items-center gap-2 px-6 py-3 bg-primary-600 text-white rounded-xl font-bold hover:bg-primary-700 hover:scale-105 transition-all shadow-lg shadow-primary-500/30 active:scale-95">
                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                     Browse Subjects
                 </button>
             </div>
             
-            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 md:gap-5"></div>
-            <div id="emptyState" class="hidden text-center py-20 text-slate-500 dark:text-slate-400 font-medium">No notes uploaded to this section yet.</div>
+            <div id="filesGrid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+            <div id="emptyState" class="hidden text-center py-20 text-slate-400 font-medium">No notes uploaded to this section yet.</div>
         </div>
     </main>
     
     <!-- PDF VIEWER MODAL - Mobile Optimized with Google Drive Preview -->
     <div id="pdfModal" class="fixed inset-0 z-[100] hidden flex flex-col">
-        <div class="absolute inset-0 bg-black/95 backdrop-blur-sm" id="modalBackdrop"></div>
+        <div class="absolute inset-0 bg-slate-950/95 backdrop-blur-sm" id="modalBackdrop"></div>
         <div class="relative flex flex-col h-full w-full overflow-hidden">
             <!-- Modal Header -->
-            <div class="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 bg-white/95 dark:bg-black/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50">
+            <div class="flex items-center justify-between px-3 sm:px-4 py-2 sm:py-3 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-b border-slate-200 dark:border-slate-800 z-50">
                 <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
                     <div class="bg-red-500 p-1 sm:p-1.5 rounded shadow-lg shadow-red-500/20 flex-shrink-0">
                         <svg class="w-3 h-3 sm:w-4 sm:h-4 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/></svg>
@@ -410,9 +346,6 @@
                     <h3 id="pdfTitle" class="font-bold dark:text-white truncate text-xs sm:text-sm">Document.pdf</h3>
                 </div>
                 <div class="flex items-center gap-1 sm:gap-2">
-                    <button id="chatMobileToggleBtn" aria-label="Open chat panel" class="md:hidden p-1.5 sm:p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg sm:rounded-xl transition-colors">
-                        <svg class="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h8m-8 4h4m7 6l-4-4H6a2 2 0 01-2-2V6a2 2 0 012-2h12a2 2 0 012 2v8a2 2 0 01-2 2h-1v4z"/></svg>
-                    </button>
                     <a id="pdfDownload" href="#" class="flex items-center gap-1 sm:gap-2 px-2 sm:px-4 py-1.5 sm:py-2 bg-primary-600 text-white rounded-lg sm:rounded-xl text-xs font-bold hover:bg-primary-700 transition-all">
                         <svg class="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
                         <span>DOWNLOAD</span>
@@ -424,103 +357,24 @@
             </div>
 
             <!-- PDF Iframe Container -->
-            <div id="pdfContainer" class="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden bg-slate-200 dark:bg-black relative">
-                <div id="pdfViewerPane" class="flex-1 min-h-0 overflow-hidden relative">
-                    <!-- Loading State -->
-                    <div id="pdfLoading" class="flex flex-col items-center justify-center h-full">
-                        <div class="w-10 h-10 sm:w-12 sm:h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                        <p class="text-slate-400 text-xs font-bold tracking-widest uppercase">Loading PDF...</p>
-                    </div>
-                    <!-- Google Drive Preview Iframe -->
-                    <iframe id="pdfIframe" class="hidden w-full h-full" allowfullscreen></iframe>
+            <div id="pdfContainer" class="flex-1 overflow-hidden bg-slate-200 dark:bg-slate-950">
+                <!-- Loading State -->
+                <div id="pdfLoading" class="flex flex-col items-center justify-center h-full">
+                    <div class="w-10 h-10 sm:w-12 sm:h-12 border-[3px] border-primary-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                    <p class="text-slate-400 text-xs font-bold tracking-widest uppercase">Loading PDF...</p>
                 </div>
-
-                <div id="chatPanelOverlay" class="hidden absolute inset-0 bg-black/45 md:hidden z-40"></div>
-                <div id="chatResizeHandle" class="hidden md:flex w-2 items-center justify-center cursor-col-resize bg-transparent hover:bg-primary-500/15 transition-colors">
-                    <div class="h-14 w-1 rounded-full bg-slate-300 dark:bg-slate-700"></div>
-                </div>
-                <aside id="chatPanel" class="fixed md:static top-0 right-0 bottom-0 bg-white/95 dark:bg-black/95 border-l border-slate-200 dark:border-slate-800 z-50 transform translate-x-full md:translate-x-0 transition-transform duration-300 flex flex-col">
-                    <div class="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-800">
-                        <div class="min-w-0">
-                            <p class="text-[11px] uppercase tracking-widest text-slate-400">Chat</p>
-                            <p id="chatCurrentPdfLabel" class="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate">No active PDF</p>
-                        </div>
-                        <button id="chatPanelCloseBtn" class="md:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close chat panel">
-                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                        </button>
-                    </div>
-
-                    <div class="p-3 border-b border-slate-200 dark:border-slate-800">
-                        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">Conversations</p>
-                        <div id="chatConversationList" class="max-h-44 overflow-y-auto space-y-2 pr-1">
-                            <p class="text-xs text-slate-500 dark:text-slate-400">Sign in to load conversations.</p>
-                        </div>
-                    </div>
-
-                    <div id="chatMessages" class="flex-1 overflow-y-auto p-3 space-y-3">
-                        <p class="text-xs text-slate-500 dark:text-slate-400">Open a PDF and start a conversation.</p>
-                    </div>
-
-                    <div class="p-3 border-t border-slate-200 dark:border-slate-800">
-                        <p id="chatAuthHint" class="text-xs text-slate-500 dark:text-slate-400 mb-2">Sign in to use chat.</p>
-                        <div class="flex items-end gap-2">
-                            <textarea id="chatInput" rows="2" maxlength="4000" placeholder="Ask about this PDF context..." class="flex-1 resize-none text-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 outline-none focus:ring-2 focus:ring-primary-500"></textarea>
-                            <button id="chatSendBtn" class="px-3 py-2 rounded-xl bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors">
-                                Send
-                            </button>
-                        </div>
-                        <div class="mt-2 flex items-center justify-between">
-                            <p id="chatStatus" class="text-xs text-slate-500 dark:text-slate-400"></p>
-                            <button id="chatRetryBtn" class="hidden text-xs text-red-500 font-semibold hover:underline">Retry</button>
-                        </div>
-                    </div>
-                </aside>
+                <!-- Google Drive Preview Iframe -->
+                <iframe id="pdfIframe" class="hidden w-full h-full" allowfullscreen></iframe>
             </div>
         </div>
     </div>
 
     <!-- Pull-to-refresh indicator -->
-    <div id="pullRefreshIndicator" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-black rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
+    <div id="pullRefreshIndicator" class="flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 rounded-full shadow-lg border border-slate-200 dark:border-slate-700">
         <svg class="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
         <span id="pullRefreshText" class="text-xs font-bold text-slate-500 dark:text-slate-400">Pull to refresh</span>
     </div>
 
-    <!-- Auth Modal -->
-    <div id="authModal" class="hidden fixed inset-0 z-[120]">
-        <div id="authBackdrop" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div class="relative h-full w-full flex items-center justify-center p-4">
-            <div class="w-full max-w-md bg-white dark:bg-black rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl">
-                <div class="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800">
-                    <h3 id="authTitle" class="text-base font-semibold text-slate-900 dark:text-slate-100">Sign in to continue</h3>
-                    <button id="authCloseBtn" class="p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800" aria-label="Close auth dialog">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                    </button>
-                </div>
-                <form id="authForm" class="p-5 space-y-3">
-                    <input id="authMode" type="hidden" value="signin">
-                    <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400">Email</label>
-                    <input id="authEmail" type="email" required autocomplete="email" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary-500">
-                    <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400">Password</label>
-                    <input id="authPassword" type="password" required autocomplete="current-password" minlength="6" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary-500">
-                    <p id="authError" class="text-xs text-red-500 min-h-[1rem]"></p>
-                    <button id="authSubmitBtn" type="submit" class="w-full rounded-xl bg-primary-600 text-white text-sm font-semibold py-2.5 hover:bg-primary-700 transition-colors">
-                        Sign in
-                    </button>
-                    <button id="authGoogleBtn" type="button" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-semibold py-2.5 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors">
-                        Continue with Google
-                    </button>
-                    <button id="authSwitchModeBtn" type="button" class="w-full text-xs text-primary-600 dark:text-primary-400 font-semibold hover:underline py-1">
-                        Need an account? Sign up
-                    </button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-    <script src="firebase-client.js"></script>
-    <script src="chat.js"></script>
     <script src="script.js"></script>
 </body>
 </html>
