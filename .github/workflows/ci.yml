@@ -3,16 +3,17 @@ name: CI
 on:
   pull_request:
   push:
-    branches-ignore:
-      - gh-pages
+    branches:
+      - main
+      - '**'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   validate:
-    name: Validate Code, Config, and Security
+    name: Validate Code and Security
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -23,7 +24,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
@@ -34,28 +35,15 @@ jobs:
           set -euo pipefail
           node --check server.js
           node --check netlify/functions/api.js
-          node --check netlify/functions/lib/firebaseAdmin.js
-          node --check netlify/functions/lib/openrouter.js
-          node --check netlify/functions/lib/chatStore.js
-          node --check netlify/functions/lib/pdfContext.js
           node --check public/script.js
-          node --check public/chat.js
-          node --check public/firebase-client.js
           node --check security-test.js
           node --check test-drive.js
-
-      - name: Validate workflow/config JSON
-        run: |
-          set -euo pipefail
-          node -e "JSON.parse(require('fs').readFileSync('firebase.json', 'utf8')); console.log('firebase.json valid')"
-          node -e "JSON.parse(require('fs').readFileSync('firestore.indexes.json', 'utf8')); console.log('firestore.indexes.json valid')"
-          node -e "JSON.parse(require('fs').readFileSync('package.json', 'utf8')); console.log('package.json valid')"
 
       - name: Run security test suite
         run: node security-test.js
 
       - name: Run npm audit (high+)
-        run: npm audit --omit=dev --audit-level=high
+        run: npm audit --audit-level=high
 
       - name: Upload CI logs on failure
         if: failure()
