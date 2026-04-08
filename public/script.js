@@ -8,6 +8,7 @@ let currentFolderId = null; // Track current folder for refresh
 let currentFolderName = null; // Track current folder name
 let folderPollTimer = null; // Auto-poll timer for folders
 let filePollTimer = null; // Auto-poll timer for files
+let pdfLoadFallbackTimer = null; // Fallback timer when inline PDF stream is slow/unavailable
 const FOLDER_POLL_INTERVAL = 60000; // Poll folders every 60 seconds
 const FILE_POLL_INTERVAL = 30000; // Poll files every 30 seconds
 
@@ -132,6 +133,10 @@ function setupEventListeners() {
     
     // Hide loading when iframe loads
     elements.pdfIframe.addEventListener('load', () => {
+        if (pdfLoadFallbackTimer) {
+            clearTimeout(pdfLoadFallbackTimer);
+            pdfLoadFallbackTimer = null;
+        }
         elements.pdfLoading.classList.add('hidden');
         elements.pdfIframe.classList.remove('hidden');
     });
@@ -532,15 +537,29 @@ function openPdf(file) {
     elements.pdfIframe.classList.add('hidden');
     elements.pdfIframe.src = '';
 
-    // Use Google Drive's embedded preview viewer so the PDF opens within the page
-    const previewUrl = `https://drive.google.com/file/d/${file.id}/preview`;
-    elements.pdfIframe.src = previewUrl;
+    // Prefer in-app stream preview first. If it takes too long, fall back to Drive preview.
+    const streamPreviewUrl = file.viewUrl || `${API_BASE}/pdf/${encodeURIComponent(file.id)}`;
+    const drivePreviewUrl = `${API_BASE}/view/${encodeURIComponent(file.id)}`;
+    elements.pdfIframe.src = streamPreviewUrl;
+
+    if (pdfLoadFallbackTimer) {
+        clearTimeout(pdfLoadFallbackTimer);
+    }
+    pdfLoadFallbackTimer = setTimeout(() => {
+        if (!elements.pdfModal.classList.contains('hidden') && elements.pdfIframe.classList.contains('hidden')) {
+            elements.pdfIframe.src = drivePreviewUrl;
+        }
+    }, 8000);
     
     // Push history state so back button/swipe closes the modal instead of leaving the site
     history.pushState({ pdfOpen: true }, '');
 }
 
 function closePdf(fromPopState) {
+    if (pdfLoadFallbackTimer) {
+        clearTimeout(pdfLoadFallbackTimer);
+        pdfLoadFallbackTimer = null;
+    }
     document.body.classList.remove('modal-open');
     elements.pdfModal.classList.add('hidden');
     elements.pdfLoading.classList.add('hidden');

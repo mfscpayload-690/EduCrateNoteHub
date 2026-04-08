@@ -5,26 +5,192 @@ const serverless = require('serverless-http');
 const helmet = require('helmet');
 const { pipeline } = require('stream');
 
+function requireEnv(name) {
+    const value = process.env[name];
+    if (!value || !String(value).trim()) {
+        throw new Error(`Missing required environment variable: ${name}`);
+    }
+    return String(value).trim();
+}
+
+function normalizePrivateKey(value) {
+    if (!value || typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    const unwrapped =
+        (trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+        (trimmed.startsWith("'") && trimmed.endsWith("'"))
+            ? trimmed.slice(1, -1)
+            : trimmed;
+    return unwrapped.replace(/\\n/g, '\n');
+}
+
+function parseUrlSafe(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+    try {
+        return new URL(value.trim());
+    } catch (_) {
+        return null;
+    }
+}
+
+function normalizeOrigin(value) {
+    const parsed = parseUrlSafe(value);
+    return parsed ? parsed.origin : '';
+}
+
+function getClientIp(req) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.trim()) {
+        return forwarded.split(',')[0].trim();
+    }
+    return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
+}
+
+function createRateLimiter({ windowMs, maxRequests, keyBuilder, message }) {
+    const store = new Map();
+
+    setInterval(() => {
+        const now = Date.now();
+        for (const [key, value] of store.entries()) {
+            if (now > value.resetAt) {
+                store.delete(key);
+            }
+        }
+    }, 300000);
+
+    return (req, res, next) => {
+        const key = keyBuilder(req);
+        const now = Date.now();
+        const entry = store.get(key);
+
+        if (!entry || now > entry.resetAt) {
+            store.set(key, { count: 1, resetAt: now + windowMs });
+            next();
+            return;
+        }
+
+        if (entry.count >= maxRequests) {
+            res.status(429).json({ success: false, error: message });
+            return;
+        }
+
+        entry.count += 1;
+        next();
+    };
+}
+
+function parseServiceAccountJson(rawValue) {
+    const raw = typeof rawValue === 'string' ? rawValue.trim() : '';
+    if (!raw) return null;
+
+    let parsed;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (_) {
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON must be valid JSON');
+    }
+
+    const clientEmail = typeof parsed.client_email === 'string' ? parsed.client_email.trim() : '';
+    const privateKey = normalizePrivateKey(parsed.private_key);
+    const projectId =
+        (typeof parsed.project_id === 'string' ? parsed.project_id.trim() : '') ||
+        (typeof process.env.FIREBASE_PROJECT_ID === 'string' ? process.env.FIREBASE_PROJECT_ID.trim() : '');
+
+    if (!projectId || !clientEmail || !privateKey) {
+        throw new Error('GOOGLE_SERVICE_ACCOUNT_JSON is missing required service-account fields');
+    }
+
+    return {
+        project_id: projectId,
+        client_email: clientEmail,
+        private_key: privateKey
+    };
+}
+
+function getDriveCredentials() {
+    const fromJson = parseServiceAccountJson(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+    if (fromJson) return fromJson;
+
+    return {
+        project_id: requireEnv('FIREBASE_PROJECT_ID'),
+        client_email: requireEnv('FIREBASE_CLIENT_EMAIL'),
+        private_key: normalizePrivateKey(requireEnv('FIREBASE_PRIVATE_KEY'))
+    };
+}
+
+const DRIVE_ID_PATTERN = /^[a-zA-Z0-9_-]{8,200}$/;
+
+function isValidDriveId(value) {
+    return typeof value === 'string' && DRIVE_ID_PATTERN.test(value);
+}
+
+function extractDriveId(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    if (isValidDriveId(trimmed)) return trimmed;
+
+    const folderPathMatch = trimmed.match(/\/folders\/([a-zA-Z0-9_-]{8,200})/);
+    if (folderPathMatch && isValidDriveId(folderPathMatch[1])) return folderPathMatch[1];
+
+    const filePathMatch = trimmed.match(/\/file\/d\/([a-zA-Z0-9_-]{8,200})/);
+    if (filePathMatch && isValidDriveId(filePathMatch[1])) return filePathMatch[1];
+
+    const parsed = parseUrlSafe(trimmed);
+    const idFromQuery = parsed ? parsed.searchParams.get('id') : '';
+    if (isValidDriveId(idFromQuery)) return idFromQuery;
+
+    return '';
+}
+
 const app = express();
 
-// Configure CORS with more restrictive settings
+const DEFAULT_ALLOWED_ORIGINS = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:8888',
+    'http://127.0.0.1:8888'
+];
+
+const configuredOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',').map((origin) => origin.trim()).filter(Boolean)
+    : DEFAULT_ALLOWED_ORIGINS;
+
+const runtimeOriginCandidates = [process.env.URL, process.env.DEPLOY_PRIME_URL, process.env.DEPLOY_URL, process.env.VERCEL_URL]
+    .filter(Boolean)
+    .map((value) => (value.startsWith('http') ? value : `https://${value}`));
+
+const runtimeOrigins = runtimeOriginCandidates.map(normalizeOrigin).filter(Boolean);
+const allowedOrigins = new Set([...configuredOrigins, ...runtimeOrigins].map(normalizeOrigin).filter(Boolean));
+
 app.use(cors({
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*',
-    methods: ['GET'],
-    allowedHeaders: ['Content-Type'],
+    origin(origin, callback) {
+        if (!origin) {
+            callback(null, true);
+            return;
+        }
+        const normalizedOrigin = normalizeOrigin(origin);
+        if (allowedOrigins.has(normalizedOrigin)) {
+            callback(null, true);
+            return;
+        }
+        callback(new Error('Origin not allowed by CORS'));
+    },
+    methods: ['GET', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: false,
-    maxAge: 86400 // 24 hours
+    maxAge: 86400
 }));
 
 app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "https://cdn.tailwindcss.com"],
+            scriptSrc: ["'self'", 'https://cdn.tailwindcss.com', 'https://www.gstatic.com'],
             styleSrc: ["'self'", "'unsafe-inline'"],
-            imgSrc: ["'self'", "data:", "https:"],
-            connectSrc: ["'self'"],
-            frameSrc: ["https://drive.google.com"],
+            imgSrc: ["'self'", 'data:', 'https:'],
+            connectSrc: ["'self'", 'https://*.googleapis.com', 'https://securetoken.googleapis.com'],
+            frameSrc: ['https://drive.google.com', 'https://accounts.google.com'],
             objectSrc: ["'none'"],
             upgradeInsecureRequests: []
         }
@@ -32,365 +198,507 @@ app.use(helmet({
     crossOriginEmbedderPolicy: false
 }));
 
-// Simple rate limiting using in-memory store (for serverless, consider external solution)
-const rateLimitStore = new Map();
-const RATE_LIMIT_WINDOW = 60000; // 1 minute
-const RATE_LIMIT_MAX_REQUESTS = 100; // 100 requests per minute (accounts for polling + thumbnails)
+app.use(createRateLimiter({
+    windowMs: 60000,
+    maxRequests: 120,
+    keyBuilder: (req) => `general:${getClientIp(req)}`,
+    message: 'Too many requests. Please try again later.'
+}));
 
-// Periodic cleanup of expired rate limit entries (every 5 minutes)
-setInterval(() => {
-    const now = Date.now();
-    for (const [ip, record] of rateLimitStore) {
-        if (now > record.resetTime) rateLimitStore.delete(ip);
-    }
-}, 300000);
+const DEFAULT_ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const configuredRootFolderRaw = (process.env.GOOGLE_DRIVE_ROOT_FOLDER_ID || '').trim();
+const configuredRootFolderId = extractDriveId(configuredRootFolderRaw);
+const ROOT_FOLDER_ID = configuredRootFolderId || DEFAULT_ROOT_FOLDER_ID;
 
-app.use((req, res, next) => {
-    const ip = req.headers['x-forwarded-for'] || req.connection.remoteAddress || 'unknown';
-    const now = Date.now();
-    
-    if (!rateLimitStore.has(ip)) {
-        rateLimitStore.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-        return next();
-    }
-    
-    const record = rateLimitStore.get(ip);
-    
-    if (now > record.resetTime) {
-        rateLimitStore.set(ip, { count: 1, resetTime: now + RATE_LIMIT_WINDOW });
-        return next();
-    }
-    
-    if (record.count >= RATE_LIMIT_MAX_REQUESTS) {
-        return res.status(429).json({ 
-            success: false, 
-            error: 'Too many requests. Please try again later.' 
-        });
-    }
-    
-    record.count++;
-    next();
-});
+const PDF_OR_SHORTCUT_QUERY =
+    "(mimeType = 'application/pdf' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/pdf'))";
+const FOLDER_OR_SHORTCUT_TO_FOLDER_QUERY =
+    "(mimeType = 'application/vnd.google-apps.folder' or (mimeType = 'application/vnd.google-apps.shortcut' and shortcutDetails.targetMimeType = 'application/vnd.google-apps.folder'))";
 
-const ROOT_FOLDER_ID = '1bB6-3-q62cn2mfRZ9pfMl72M75_yZMp1';
+const DRIVE_LIST_PAGE_SIZE = 1000;
+const DRIVE_PARENT_QUERY_BATCH_SIZE = 20;
+const MAX_RECURSIVE_FOLDER_SCAN = 500;
+const FUNCTION_MAX_RESPONSE_BYTES = Number.parseInt(process.env.FUNCTION_MAX_RESPONSE_BYTES || '4500000', 10);
 
-// Cache the Drive client — no need to re-parse credentials on every request
 let cachedDriveClient = null;
 let cachedAuth = null;
-const initDriveClient = () => {
+
+function initDriveClient() {
     if (cachedDriveClient) return cachedDriveClient;
+
     try {
-        const jsonStr = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-        const credentials = JSON.parse(jsonStr.trim());
+        const credentials = getDriveCredentials();
         cachedAuth = new google.auth.GoogleAuth({
             credentials,
-            scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+            scopes: ['https://www.googleapis.com/auth/drive.readonly']
         });
         cachedDriveClient = google.drive({ version: 'v3', auth: cachedAuth });
         return cachedDriveClient;
-    } catch (e) { return null; }
-};
+    } catch (error) {
+        console.error('Drive initialization failed:', error.message);
+        return null;
+    }
+}
 
-// Returns a valid Bearer access token for the service account
-const getAccessToken = async () => {
+async function getAccessToken() {
     if (!cachedAuth) initDriveClient();
+    if (!cachedAuth) return null;
     const client = await cachedAuth.getClient();
     const tokenResponse = await client.getAccessToken();
-    return tokenResponse.token;
-};
+    return tokenResponse?.token || null;
+}
 
-// Natural sort helper for proper alphabetical + numerical ordering
 function naturalSort(a, b) {
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
 }
 
-// 1. Get Folders
+function formatFileSize(sizeValue) {
+    const parsedSize = Number.parseInt(sizeValue, 10);
+    if (!Number.isFinite(parsedSize) || parsedSize <= 0) {
+        return 'Unknown size';
+    }
+    return (parsedSize / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function resolvePdfFileId(file) {
+    if (file?.mimeType === 'application/vnd.google-apps.shortcut') {
+        return file?.shortcutDetails?.targetId || '';
+    }
+    return file?.id || '';
+}
+
+function mapDriveFileToApiFile(file) {
+    const resolvedId = resolvePdfFileId(file);
+    if (!isValidDriveId(resolvedId)) {
+        return null;
+    }
+
+    return {
+        id: resolvedId,
+        name: file.name,
+        size: formatFileSize(file.size),
+        viewUrl: `/api/pdf/${resolvedId}`,
+        downloadUrl: `/api/download/${resolvedId}`,
+        thumbnailUrl: `/api/thumbnail/${resolvedId}`
+    };
+}
+
+function chunkArray(items, chunkSize) {
+    const chunks = [];
+    for (let index = 0; index < items.length; index += chunkSize) {
+        chunks.push(items.slice(index, index + chunkSize));
+    }
+    return chunks;
+}
+
+async function listDriveFilesPaginated(driveClient, options) {
+    const files = [];
+    let pageToken = undefined;
+
+    do {
+        const response = await driveClient.files.list({
+            ...options,
+            pageSize: DRIVE_LIST_PAGE_SIZE,
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true,
+            pageToken
+        });
+
+        files.push(...(response.data.files || []));
+        pageToken = response.data.nextPageToken || undefined;
+    } while (pageToken);
+
+    return files;
+}
+
+async function listPdfFilesAcrossParents(driveClient, parentIds) {
+    const validParentIds = parentIds.filter(isValidDriveId);
+    if (!validParentIds.length) return [];
+
+    const allFiles = [];
+    const parentChunks = chunkArray(validParentIds, DRIVE_PARENT_QUERY_BATCH_SIZE);
+
+    for (const parentChunk of parentChunks) {
+        const parentQuery = parentChunk.map((id) => `'${id}' in parents`).join(' or ');
+        const files = await listDriveFilesPaginated(driveClient, {
+            q: `(${parentQuery}) and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'nextPageToken, files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            orderBy: 'name'
+        });
+        allFiles.push(...files);
+    }
+
+    return allFiles;
+}
+
+async function listSubfoldersAcrossParents(driveClient, parentIds) {
+    const validParentIds = parentIds.filter(isValidDriveId);
+    if (!validParentIds.length) return [];
+
+    const allFolderCandidates = [];
+    const parentChunks = chunkArray(validParentIds, DRIVE_PARENT_QUERY_BATCH_SIZE);
+
+    for (const parentChunk of parentChunks) {
+        const parentQuery = parentChunk.map((id) => `'${id}' in parents`).join(' or ');
+        const folderCandidates = await listDriveFilesPaginated(driveClient, {
+            q: `(${parentQuery}) and ${FOLDER_OR_SHORTCUT_TO_FOLDER_QUERY} and trashed = false`,
+            fields: 'nextPageToken, files(id, name, mimeType, shortcutDetails(targetId,targetMimeType))',
+            orderBy: 'name'
+        });
+        allFolderCandidates.push(...folderCandidates);
+    }
+
+    const folderIds = [];
+    for (const candidate of allFolderCandidates) {
+        if (candidate?.mimeType === 'application/vnd.google-apps.folder' && isValidDriveId(candidate.id)) {
+            folderIds.push(candidate.id);
+            continue;
+        }
+
+        if (
+            candidate?.mimeType === 'application/vnd.google-apps.shortcut' &&
+            candidate?.shortcutDetails?.targetMimeType === 'application/vnd.google-apps.folder' &&
+            isValidDriveId(candidate?.shortcutDetails?.targetId)
+        ) {
+            folderIds.push(candidate.shortcutDetails.targetId);
+        }
+    }
+
+    return folderIds;
+}
+
+async function listPdfFilesRecursively(driveClient, folderId) {
+    const queue = [folderId];
+    const visited = new Set();
+    const filesById = new Map();
+
+    while (queue.length > 0 && visited.size < MAX_RECURSIVE_FOLDER_SCAN) {
+        const currentBatch = [];
+        while (queue.length > 0 && currentBatch.length < DRIVE_PARENT_QUERY_BATCH_SIZE) {
+            const nextFolderId = queue.shift();
+            if (!isValidDriveId(nextFolderId) || visited.has(nextFolderId)) continue;
+            visited.add(nextFolderId);
+            currentBatch.push(nextFolderId);
+        }
+
+        if (!currentBatch.length) continue;
+
+        const [pdfFiles, subfolders] = await Promise.all([
+            listPdfFilesAcrossParents(driveClient, currentBatch),
+            listSubfoldersAcrossParents(driveClient, currentBatch)
+        ]);
+
+        for (const file of pdfFiles) {
+            const resolvedId = resolvePdfFileId(file);
+            if (isValidDriveId(resolvedId) && !filesById.has(resolvedId)) {
+                filesById.set(resolvedId, file);
+            }
+        }
+
+        for (const nextFolderId of subfolders) {
+            if (isValidDriveId(nextFolderId) && !visited.has(nextFolderId)) {
+                queue.push(nextFolderId);
+            }
+        }
+    }
+
+    return Array.from(filesById.values());
+}
+
 app.get('/api/folders', async (req, res) => {
     try {
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+            return;
         }
-        const response = await drive.files.list({
+
+        const response = await driveClient.files.list({
             q: `'${ROOT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
             fields: 'files(id, name)',
             orderBy: 'name',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
-        // Apply natural sort for proper ordering
-        const sortedFolders = response.data.files.sort(naturalSort);
-        res.setHeader('Cache-Control', 'public, max-age=60'); // 1 minute cache for folders
+
+        const sortedFolders = (response.data.files || []).sort(naturalSort);
+        res.setHeader('Cache-Control', 'public, max-age=60');
         res.json({ success: true, data: sortedFolders });
-    } catch (error) { 
-        console.error("Get Folders Error:", error.message);
-        res.status(500).json({ success: false, error: 'Failed to retrieve folders' }); 
+    } catch (error) {
+        console.error('Get folders error:', error.message);
+        res.status(500).json({ success: false, error: 'Failed to retrieve folders' });
     }
 });
 
-// 2. Get Files with validation
 app.get('/api/files/:folderId', async (req, res) => {
     try {
         const { folderId } = req.params;
-        
-        // Validate folderId format (Google Drive IDs are alphanumeric with hyphens and underscores)
-        if (!folderId || !/^[a-zA-Z0-9_-]+$/.test(folderId)) {
-            return res.status(400).json({ success: false, error: 'Invalid folder ID' });
+        if (!isValidDriveId(folderId)) {
+            res.status(400).json({ success: false, error: 'Invalid folder ID' });
+            return;
         }
-        
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+            return;
         }
-        
-        const response = await drive.files.list({
-            q: `'${folderId}' in parents and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            orderBy: 'name',
-        });
-        const files = response.data.files.map(f => ({
-            id: f.id,
-            name: f.name,
-            size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
-            viewUrl: `/api/pdf/${f.id}`,
-            downloadUrl: `/api/download/${f.id}`,
-            thumbnailUrl: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`
-        })).sort(naturalSort);
-        
-        // Short cache to help with sync - 30 seconds
+
+        const driveFiles = await listPdfFilesRecursively(driveClient, folderId);
+        const files = driveFiles
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
+            .sort(naturalSort);
+
         res.setHeader('Cache-Control', 'public, max-age=30');
         res.json({ success: true, data: files });
-    } catch (error) { 
-        console.error("Get Files Error:", error.message);
-        res.status(500).json({ success: false, error: 'Failed to retrieve files' }); 
+    } catch (error) {
+        console.error('Get files error:', error.message);
+        res.status(500).json({ success: false, error: 'Failed to retrieve files' });
     }
 });
 
-// 3. Search Route with Input Validation and Sanitization
 app.get('/api/search', async (req, res) => {
     try {
-        const { q } = req.query;
-        
-        // Input validation
-        if (!q || typeof q !== 'string') {
-            return res.json({ success: true, data: [] });
-        }
-        
-        // Trim and check length
-        const query = q.trim();
-        if (query.length < 2) {
-            return res.json({ success: true, data: [] });
-        }
-        
-        // Limit query length to prevent abuse
-        if (query.length > 100) {
-            return res.status(400).json({ success: false, error: 'Query too long' });
-        }
-        
-        // Sanitize input: allow only alphanumeric, spaces, and common punctuation
-        const sanitizedQuery = query.replace(/[^a-zA-Z0-9\s\-_.]/g, '');
-        
-        if (!sanitizedQuery) {
-            return res.json({ success: true, data: [] });
+        const queryInput = req.query.q;
+        if (!queryInput || typeof queryInput !== 'string') {
+            res.json({ success: true, data: [] });
+            return;
         }
 
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        const query = queryInput.trim();
+        if (query.length < 2) {
+            res.json({ success: true, data: [] });
+            return;
         }
-        
-        // Use sanitized query - no need to escape single quotes as we've removed them
-        const response = await drive.files.list({
-            q: `name contains '${sanitizedQuery}' and mimeType = 'application/pdf' and trashed = false`,
-            fields: 'files(id, name, size)',
-            pageSize: 10
+
+        if (query.length > 100) {
+            res.status(400).json({ success: false, error: 'Query too long' });
+            return;
+        }
+
+        const sanitizedQuery = query.replace(/[^a-zA-Z0-9\s\-_.]/g, '');
+        if (!sanitizedQuery) {
+            res.json({ success: true, data: [] });
+            return;
+        }
+
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+            return;
+        }
+
+        const response = await driveClient.files.list({
+            q: `name contains '${sanitizedQuery}' and ${PDF_OR_SHORTCUT_QUERY} and trashed = false`,
+            fields: 'files(id, name, size, mimeType, shortcutDetails(targetId,targetMimeType))',
+            pageSize: 20,
+            corpora: 'allDrives',
+            supportsAllDrives: true,
+            includeItemsFromAllDrives: true
         });
 
-        const files = response.data.files.map(f => ({
-            id: f.id,
-            name: f.name,
-            size: (parseInt(f.size) / 1024 / 1024).toFixed(1) + ' MB',
-            viewUrl: `/api/pdf/${f.id}`,
-            downloadUrl: `/api/download/${f.id}`,
-            thumbnailUrl: `https://drive.google.com/thumbnail?id=${f.id}&sz=w400`
-        })).sort(naturalSort);
+        const files = (response.data.files || [])
+            .map(mapDriveFileToApiFile)
+            .filter(Boolean)
+            .sort(naturalSort);
 
-        // Cache search results for 15 minutes
         res.setHeader('Cache-Control', 'public, max-age=900');
         res.json({ success: true, data: files });
     } catch (error) {
-        console.error("Search API Error:", error.message);
-        // Don't expose internal error details to client
+        console.error('Search API error:', error.message);
         res.status(500).json({ success: false, error: 'Search failed' });
     }
 });
 
-// 4. View PDF with validation - redirects to Google previewer (legacy)
 app.get('/api/view/:fileId', (req, res) => {
     const { fileId } = req.params;
-    
-    // Validate fileId format
-    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-        return res.status(400).json({ success: false, error: 'Invalid file ID' });
+    if (!isValidDriveId(fileId)) {
+        res.status(400).json({ success: false, error: 'Invalid file ID' });
+        return;
     }
-    
-    // Redirects user to Google's official previewer
+
     res.redirect(`https://drive.google.com/file/d/${fileId}/preview`);
 });
 
-// 4b. Stream PDF bytes for embedded viewer
 app.get('/api/pdf/:fileId', async (req, res) => {
     const { fileId } = req.params;
-    
-    // Validate fileId format
-    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-        return res.status(400).json({ success: false, error: 'Invalid file ID' });
+    if (!isValidDriveId(fileId)) {
+        res.status(400).json({ success: false, error: 'Invalid file ID' });
+        return;
     }
-    
+
     try {
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.redirect(302, `/api/view/${fileId}`);
+            return;
         }
-        
-        // Get file metadata first to verify it exists and is a PDF
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
-        
+
+        const meta = await driveClient.files.get({
+            fileId,
+            fields: 'mimeType,name,size',
+            supportsAllDrives: true
+        });
+
         if (meta.data.mimeType !== 'application/pdf') {
-            return res.status(400).json({ success: false, error: 'File is not a PDF' });
+            res.status(400).json({ success: false, error: 'File is not a PDF' });
+            return;
         }
-        
-        // Stream the file content
-        const response = await drive.files.get(
-            { fileId, alt: 'media' },
+
+        const fileSizeBytes = Number.parseInt(meta.data.size, 10);
+        if (Number.isFinite(fileSizeBytes) && fileSizeBytes > FUNCTION_MAX_RESPONSE_BYTES) {
+            res.redirect(302, `https://drive.google.com/file/d/${fileId}/preview`);
+            return;
+        }
+
+        const response = await driveClient.files.get(
+            { fileId, alt: 'media', supportsAllDrives: true },
             { responseType: 'stream' }
         );
-        
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(meta.data.name)}"`);
-        res.setHeader('Cache-Control', 'public, max-age=86400'); // Cache for 24 hours
-        
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+
         if (meta.data.size) {
             res.setHeader('Content-Length', meta.data.size);
         }
-        
+
         pipeline(response.data, res, (streamError) => {
             if (streamError) {
-                console.error('PDF Stream Pipeline Error:', streamError.message);
+                console.error('PDF stream pipeline error:', streamError.message);
                 if (!res.headersSent) {
-                    res.status(500).json({ success: false, error: 'Failed to fetch PDF' });
+                    res.redirect(302, `/api/view/${fileId}`);
                 }
             }
         });
     } catch (error) {
-        console.error("PDF Stream Error:", error.message);
-        res.status(500).json({ success: false, error: 'Failed to fetch PDF' });
+        console.error('PDF stream error:', error.message);
+        res.redirect(302, `/api/view/${fileId}`);
     }
 });
 
-// 4c. Thumbnail proxy - fetches thumbnail from Drive and streams to client (bypasses CORS)
 app.get('/api/thumbnail/:fileId', async (req, res) => {
     const { fileId } = req.params;
-    
-    // Validate fileId format
-    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-        return res.status(400).json({ success: false, error: 'Invalid file ID' });
+    if (!isValidDriveId(fileId)) {
+        res.status(400).json({ success: false, error: 'Invalid file ID' });
+        return;
     }
-    
+
     try {
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+            return;
         }
-        
-        // Get the thumbnailLink from Drive
-        const meta = await drive.files.get({
+
+        const meta = await driveClient.files.get({
             fileId,
-            fields: 'thumbnailLink,hasThumbnail'
+            fields: 'thumbnailLink,hasThumbnail',
+            supportsAllDrives: true
         });
-        
+
         if (!meta.data.hasThumbnail || !meta.data.thumbnailLink) {
-            return res.status(404).json({ success: false, error: 'No thumbnail available' });
+            res.status(404).json({ success: false, error: 'No thumbnail available' });
+            return;
         }
-        
-        // Fetch the thumbnail using the authenticated Drive client so auth is included
-        // Request a larger thumbnail (default is small, bump to 400px wide)
+
         let thumbUrl = meta.data.thumbnailLink;
         thumbUrl = thumbUrl.replace(/=s\d+$/, '=s400');
 
-        // Get a fresh access token from the cached service account auth
         const accessToken = await getAccessToken();
+        if (!accessToken) {
+            res.status(500).json({ success: false, error: 'Access token unavailable' });
+            return;
+        }
 
         const thumbResponse = await fetch(thumbUrl, {
-            headers: { 'Authorization': `Bearer ${accessToken}` },
+            headers: { Authorization: `Bearer ${accessToken}` },
             signal: AbortSignal.timeout(10000)
         });
-        
+
         if (!thumbResponse.ok) {
-            return res.status(502).json({ success: false, error: 'Failed to fetch thumbnail from Drive' });
+            res.status(502).json({ success: false, error: 'Failed to fetch thumbnail from Drive' });
+            return;
         }
-        
+
         const arrayBuffer = await thumbResponse.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
+
         res.setHeader('Content-Type', thumbResponse.headers.get('content-type') || 'image/jpeg');
-        res.setHeader('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+        res.setHeader('Cache-Control', 'public, max-age=3600');
         res.send(buffer);
     } catch (error) {
-        console.error('Thumbnail Error:', error.message);
+        console.error('Thumbnail error:', error.message);
         res.status(500).json({ success: false, error: 'Failed to fetch thumbnail' });
     }
 });
 
-// 5. Download PDF with validation - streams through server for mobile compatibility
 app.get('/api/download/:fileId', async (req, res) => {
     const { fileId } = req.params;
-    
-    // Validate fileId format
-    if (!fileId || !/^[a-zA-Z0-9_-]+$/.test(fileId)) {
-        return res.status(400).json({ success: false, error: 'Invalid file ID' });
+    if (!isValidDriveId(fileId)) {
+        res.status(400).json({ success: false, error: 'Invalid file ID' });
+        return;
     }
-    
+
     try {
-        const drive = initDriveClient();
-        if (!drive) {
-            return res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+        const driveClient = initDriveClient();
+        if (!driveClient) {
+            res.status(500).json({ success: false, error: 'Drive client initialization failed' });
+            return;
         }
-        
-        // Get file metadata to set proper filename
-        const meta = await drive.files.get({ fileId, fields: 'mimeType,name,size' });
-        
+
+        const meta = await driveClient.files.get({
+            fileId,
+            fields: 'mimeType,name,size',
+            supportsAllDrives: true
+        });
+
         if (meta.data.mimeType !== 'application/pdf') {
-            return res.status(400).json({ success: false, error: 'File is not a PDF' });
+            res.status(400).json({ success: false, error: 'File is not a PDF' });
+            return;
         }
-        
-        // Stream the file content with attachment disposition to force download
-        const response = await drive.files.get(
-            { fileId, alt: 'media' },
+
+        const response = await driveClient.files.get(
+            { fileId, alt: 'media', supportsAllDrives: true },
             { responseType: 'stream' }
         );
-        
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(meta.data.name)}"`);
         res.setHeader('Cache-Control', 'public, max-age=86400');
-        
+
         if (meta.data.size) {
             res.setHeader('Content-Length', meta.data.size);
         }
-        
+
         pipeline(response.data, res, (streamError) => {
             if (streamError) {
-                console.error('Download Stream Pipeline Error:', streamError.message);
+                console.error('Download stream pipeline error:', streamError.message);
                 if (!res.headersSent) {
                     res.status(500).json({ success: false, error: 'Failed to download PDF' });
                 }
             }
         });
     } catch (error) {
-        console.error("Download Stream Error:", error.message);
+        console.error('Download stream error:', error.message);
         res.status(500).json({ success: false, error: 'Failed to download PDF' });
     }
 });
+
+app.use((error, req, res, next) => {
+    if (error && error.message === 'Origin not allowed by CORS') {
+        res.status(403).json({ success: false, error: 'CORS origin denied' });
+        return;
+    }
+
+    console.error('Unhandled API error:', error?.message || 'Unknown error');
+    res.status(500).json({ success: false, error: 'Internal server error' });
+});
+
 module.exports = app;
-// Tell serverless-http to base64-encode binary responses (images) so Netlify Lambda
-// doesn't corrupt the bytes — this is what makes thumbnails work in production.
 module.exports.handler = serverless(app, {
     binary: [
         'application/pdf',
